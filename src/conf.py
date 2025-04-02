@@ -99,13 +99,14 @@ needs_tags = [
     dict(name="readability", description="Readability-related guideline"),
     dict(name="reduce-human-error", description="Reducing human error guideline"),
     dict(name="numerics", description="Numerics-related guideline"),
+    dict(name="certifiability", description="Ability to safety-certify software"),
 ]
 
 needs_categories = [
     dict(name="mandatory", description="This guideline is mandatory", color="#999999"),
     dict(name="required", description="This guideline is required", color="#FFCC00"),
     dict(name="advisory", description="This guideline is advisory, should be followed when able", color="#FFCC00"),
-    dict(name="disapplied", description="This guideline is advisory, should be followed when able", color="#FFCC00"),
+    dict(name="disapplied", description="TODO(pete.levasseur): Fixed to have correct description", color="#FFCC00"),
 ]
 
 needs_decidabilities = [

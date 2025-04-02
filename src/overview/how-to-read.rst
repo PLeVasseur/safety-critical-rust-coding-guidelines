@@ -6,4 +6,5 @@
 How to read
 ===========
 
-
+How to write
+============
