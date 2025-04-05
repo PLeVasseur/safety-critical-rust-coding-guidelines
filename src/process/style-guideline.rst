@@ -211,7 +211,7 @@ A single FLS ``paragraph-id`` **MAY** have more than one guideline which applies
 
 
 ``decidability``
-----------
+----------------
 
 **MUST** be one of these values:
 
@@ -226,5 +226,41 @@ analyzer to answer the question with "yes" or "no" in *every case* and **MUST** 
 as ``undecidable`` otherwise.
 
 
+``scope``
+---------
+
+**MUST** be one of these values:
+
+* ``module``
+* ``crate``
+* ``system``
+
+The ``scope`` describes at which level of program scope the guideline can be confirmed followed
+for each instance of code for which a guideline applies.
+
+For example, if there for each instance of ``unsafe`` code usage there may be guidelines which
+must then be checked at the module level. This must be done since if a single usage of ``unsafe``
+is used in a module, the entire module must be checked for certain invariants.
+
+When writing guidelines we **MUST** attempt to lower the ``scope`` as small as possible and as
+allowed by the semantics to improve tractability of their application.
+
+``module``
+^^^^^^^^^
+
+A guideline which is able to be checked at the module level without reference
+to other modules or crates **MUST** be classified as ``module``.
+
+``crate``
+^^^^^^^^^
+
+A guideline which cannot be checked at the module level, but which does not require the
+entire source text **MUST** be classified as ``crate``.
+
+``system``
+^^^^^^^^^^
+
+A guideline which cannot be checked at the module or crate level and requires the entire
+source text **MUST** be classified as ``system``.
 
 
