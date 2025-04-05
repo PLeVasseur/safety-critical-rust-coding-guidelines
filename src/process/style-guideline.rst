@@ -91,6 +91,11 @@ We will examine each part:
       :scope: module
       :tags: numerics
 
+``guideline`` Title
+-------------------
+
+The Title **MUST** provide a description of the guideline.
+
 ``guideline`` ``id``
 --------------------
 
@@ -281,6 +286,22 @@ the scope of the guideline.
 
 Content **SHOULD NOT** cover the rationale for the guideline, which is done in the ``rationale`` section.
 
+Amplification
+^^^^^^^^^^^^^
+
+Guideline Content **MAY** contain a section titled *Amplification* followed by text that provides a more
+precise description of the guideline title. An amplification is normative; if it conflicts with the
+``guideline`` Title, the amplification **MUST** take precedence. This mechanism is convenient as it allows
+a complicated concept to be conveyed using a short Title.
+
+Exception
+^^^^^^^^^
+
+Guideline Content **MAY** contain a section titled *Exception* followed by text that that describes
+situations in which the guideline does not apply. The use of exceptions permits the description of
+some guidelines to be simplified. It is important to note that an exception is a situation in which
+a guideline does not apply. Code that complies with a guideline by virtue of an exception does not
+require a deviation.
 
 ``rationale``
 =============
@@ -323,6 +344,19 @@ TODO(pete.levasseur)
 ``non_compliant_example``
 =========================
 
+::
+
+      .. non_compliant_example::
+         :id: non_compl_ex_PO5TyFsRTlWv
+         :status: draft
+      
+          .. code-block:: rust
+      
+            fn calculate_next_position(current: u32, velocity: u32) -> u32 {
+                // Potential for silent overflow in release builds
+                current + velocity
+            }
+
 ``non_compliant_example`` ``id``
 --------------------------------
 
@@ -343,18 +377,52 @@ The ``status`` option of a ``non_compl_ex`` **MUST** match the ``status`` of its
 ``non_compliant_example`` Content
 ---------------------------------
 
+The Content section of a ``non_compliant_example`` **MUST** contain both a Code Explanation and Code Example.
+
+The ``non_compliant_example`` is neither normative, nor exhaustive. ``guideline`` Content **MUST** take precedence.
+
 ``non_compliant_example`` Code Explanation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-TODO(pete.levasseur)
+The Code Explanation of a `non_compliant_example` **MUST** explain in prose the reason the guideline
+when not applied results in code which is undesirable.
+
+The Code Explanation of a `non_compliant_example` **MAY** be a simple explanation no longer than
+a sentence.
+
+The Code Explanation of a ``non_compliant_example`` **SHOULD** be no longer than necessary to explain
+the Code Example that follows.
 
 ``non_compliant_example`` Code Example
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-TODO(pete.levasseur)
+A ``non_compliant_example`` Code Example **MUST** have a single ``.. code-block:: rust``
+in which the example code is placed.
+
+A ``non_compliant_example`` Code Example **SHOULD** be made as short and simple to understand
+as possible.
+
+A ``non_compliant_example`` Code Example **SHOULD** include clarifying comments if complex and/or
+long.
+
+The Code Example of a ``non_compliant_example`` **MUST NOT** contain a guideline violation other
+than the current guideline.
 
 ``compliant_example``
 =====================
+
+::
+
+      .. compliant_example::
+         :id: compl_ex_WTe7GoPu5Ez0
+         :status: draft
+      
+          .. code-block:: rust
+      
+            fn calculate_next_position(current: u32, velocity: u32) -> u32 {
+                // Explicitly handle potential overflow with checked addition
+                current.checked_add(velocity).expect("Position calculation overflowed")
+            }
 
 ``compliant_example`` ``id``
 ----------------------------
@@ -376,12 +444,34 @@ The ``status`` option of a ``compl_ex`` **MUST** match the ``status`` of its par
 ``compliant_example`` Content
 -----------------------------
 
+The Content section of a ``compliant_example`` **MUST** contain both a Code Explanation and Code Example.
+
+The ``compliant_example`` is neither normative, nor exhaustive. ``guideline`` Content **MUST** take precedence.
+
 ``compliant_example`` Code Explanation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-TODO(pete.levasseur)
+The Code Explanation of a `compliant_example` **MAY** be a simple explanation no longer than
+a sentence.
+
+The Code Explanation of a ``compliant_example`` **SHOULD** be no longer than necessary to explain
+the Code Example that follows.
+
 
 ``compliant_example`` Code Example
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-TODO(pete.levasseur)
+A ``compliant_example`` Code Example **MUST** have a single ``.. code-block:: rust``
+in which the example code is placed.
+
+A ``compliant_example`` Code Example **SHOULD** be made as short and simple to understand
+as possible.
+
+A ``compliant_example`` Code Example **SHOULD** include clarifying comments if complex and/or
+long.
+
+A ``compliant_example`` Code Example **MUST** comply with every guideline.
+
+A ``compliant_example`` Code Example **SHOULD** try to illustrate the guideline by
+getting close to violating it, but staying within compliance.
+
