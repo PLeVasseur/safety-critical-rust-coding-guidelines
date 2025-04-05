@@ -3,13 +3,6 @@
 
 .. default-domain:: coding-guidelines
 
-Overview
-========
+Functions
+=========
 
-.. toctree::
-   :maxdepth: 1
-
-   scope
-   how-to-read
-   style-guideline
-   versioning

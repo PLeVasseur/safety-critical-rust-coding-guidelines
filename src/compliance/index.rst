@@ -3,13 +3,11 @@
 
 .. default-domain:: coding-guidelines
 
-Overview
-========
+Compliance
+==========
 
 .. toctree::
    :maxdepth: 1
 
-   scope
-   how-to-read
-   style-guideline
-   versioning
+   compliance-meaning
+   deviation-process

@@ -1,15 +1,8 @@
+
 .. SPDX-License-Identifier: MIT OR Apache-2.0
    SPDX-FileCopyrightText: The Coding Guidelines Subcommittee Contributors
 
 .. default-domain:: coding-guidelines
 
-Overview
-========
-
-.. toctree::
-   :maxdepth: 1
-
-   scope
-   how-to-read
-   style-guideline
-   versioning
+Compliance Meaning
+==================

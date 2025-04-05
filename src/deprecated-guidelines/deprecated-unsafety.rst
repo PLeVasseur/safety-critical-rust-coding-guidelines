@@ -3,13 +3,5 @@
 
 .. default-domain:: coding-guidelines
 
-Overview
+Unsafety
 ========
-
-.. toctree::
-   :maxdepth: 1
-
-   scope
-   how-to-read
-   style-guideline
-   versioning

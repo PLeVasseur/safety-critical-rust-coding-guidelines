@@ -13,7 +13,9 @@ Safety-Critical Rust Coding Guidelines
    README
    overview/index
    coding-guidelines/index
+   compliance/index
    appendices/index
+   deprecated-guidelines/index
 
 Indices and tables
 ==================
