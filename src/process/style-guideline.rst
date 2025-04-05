@@ -210,3 +210,21 @@ the guidelines cover exactly the specification, no more and no less.
 A single FLS ``paragraph-id`` **MAY** have more than one guideline which applies to it.
 
 
+``decidability``
+----------
+
+**MUST** be one of these values:
+
+* ``decidable``
+* ``undecidable``
+
+``decidability`` describes the theoretical ability of a static analyzer to answer the
+question: "Does this code comply with this rule?"
+
+A guideline **MUST** be classified as  ``decidable`` if it is possible for such a static
+analyzer to answer the question with "yes" or "no" in *every case* and **MUST** be classified
+as ``undecidable`` otherwise.
+
+
+
+
