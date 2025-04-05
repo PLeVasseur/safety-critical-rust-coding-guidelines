@@ -264,3 +264,10 @@ A guideline which cannot be checked at the module or crate level and requires th
 source text **MUST** be classified as ``system``.
 
 
+``tags``
+--------
+
+The ``tags`` are largely descriptive, not proscriptive means of finding commonality between
+similar guidelines.
+
+Each guideline **MUST** have at least one item listed in ``tags``.
