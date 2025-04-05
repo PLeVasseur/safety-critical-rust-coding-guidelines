@@ -3,12 +3,11 @@
 
 .. default-domain:: coding-guidelines
 
-Overview
-========
+Process
+=======
 
 .. toctree::
    :maxdepth: 1
 
-   scope
-   how-to-read
-   versioning
+   style-guideline
+   guideline-lifecycle

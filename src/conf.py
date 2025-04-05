@@ -89,7 +89,6 @@ needs_extra_sections = ["rationale", "compliant_example", "non_compliant_example
 
 needs_statuses = [
     dict(name="draft", description="This guideline is in draft stage", color="#999999"),
-    dict(name="proposed", description="This guideline is proposed for review", color="#FFCC00"),
     dict(name="approved", description="This guideline has been approved", color="#00FF00"),
     dict(name="deprecated", description="This guideline is deprecated", color="#FF0000"),
 ]

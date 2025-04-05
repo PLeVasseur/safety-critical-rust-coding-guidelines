@@ -153,11 +153,40 @@ or ``required``, or as ``advisory``.
 ``status``
 ----------
 
-Four possible values, semantics of each differ:
+Three possible values, semantics of each differ:
 
 * ``draft``
-* ``proposed``
 * ``approved``
 * ``deprecated``
 
+Guidelines have a lifecycle where they are first proposed and included as ``draft`` 
+to allow adoption and feedback to accrue. The Coding Guidelines Subcommittee will
+periodically review ``draft`` guidelines and either promote them to ``approved``
+or demote them to ``deprecated``.
 
+From time to time an ``approved`` guideline will be moved to ``deprecated``. There
+could be a number of reasons, such as: a guideline which was a poor fit or wrong,
+or in order to make a single guideline more granular and replace it with
+more than one guideline.
+
+For more, see :ref:`Guideline Lifecycle`.
+
+``draft``
+^^^^^^^^^
+
+These guidelines are not yet considered in force, but are mature enough their enforcement
+is recommended. ``draft`` guideline usage and feedback will help to either promote
+them to ``approved`` or demote them to ``deprecated``. No formal deviation is required
+as outlined in :ref:`Compliance`, but alternative arrangements should be made for documenting
+non-compliances.
+
+``approved``
+^^^^^^^^^^^^
+
+These guidelines are considered in force. Any deviations must follow the rule for their
+appropriate ``category``.
+
+``deprecated``
+^^^^^^^^^^^^^^
+
+These guidelines are not in force and must not be applied.
