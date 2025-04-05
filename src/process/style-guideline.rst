@@ -8,6 +8,13 @@
 Style Guideline
 ###############
 
+******************************
+Specifying requirements levels
+******************************
+
+We follow `IETF RFC 2119 <https://datatracker.ietf.org/doc/html/rfc2119>`_
+for specifying requirements levels.
+
 *****************************
 Example of a coding guideline
 *****************************
@@ -88,18 +95,19 @@ We will examine each part:
 ``id``
 ------
 
-A unique identifier for each guideline. Guideline identifiers begin with ``gui_``.
+A unique identifier for each guideline. Guideline identifiers **MUST** ``gui_``.
 
-These identifiers are considered **stable** across releases and will never be removed.
+These identifiers are considered **stable** across releases and **MUST NOT** be removed.
 See ``status`` below for more.
 
-Can be generated using the ``generate-guideline-templates.py`` script.
+**MUST** be generated using the ``generate-guideline-templates.py`` script to ensure
+compliance.
 
 
 ``category``
 ------------
 
-Four possible values, semantics of each differ:
+**MUST** be one of these values:
 
 * ``mandatory``
 * ``required``
@@ -109,29 +117,29 @@ Four possible values, semantics of each differ:
 ``mandatory``
 ^^^^^^^^^^^^^
 
-Code claimed to be in compliance with this document must follow every guideline marked as ``mandatory``.
+Code claimed to be in compliance with this document **MUST** follow every guideline marked as ``mandatory``.
 
 *TODO(pete.levasseur): Add more tips on when this is a good choice for a guideline.*
 
 ``required``
 ^^^^^^^^^^^^
 
-Code claimed to be in compliance with this document shall follow every guideline marked as ``required``,
+Code claimed to be in compliance with this document **MUST** follow every guideline marked as ``required``,
 with a formal deviation required as outlined in :ref:`Compliance`, where this is not the case.
 
-An organization or project may choose to recategorize any ``required`` guideline to ``mandatory``.
+An organization or project **MAY** choose to recategorize any ``required`` guideline to ``mandatory``.
 
 *TODO(pete.levasseur): Add more tips on when this is a good choice for a guideline.*
 
 ``advisory``
 ^^^^^^^^^^^^
 
-These are recommendations. However, the category of ``advisory`` does not mean that these items can
-be ignored, but rather that they should be followed as far as reasonably practical. Formal deviation
-is not necessary for advisory guidelines but, if the formal deviation process is not followed,
-alternative arrangements should be made for documenting non-compliances.
+These are recommendations and **SHOULD** be applied. However, the category of ``advisory`` does not mean 
+that these items can be ignored, but rather that they **SHOULD** be followed as far as reasonably practical.
+Formal deviation is not necessary for advisory guidelines but, if the formal deviation process is not followed,
+alternative arrangements **MUST** be made for documenting non-compliances.
 
-An organization or project may choose to recategorize any ``advisory`` guideline as ``mandatory``
+An organization or project **MAY** choose to recategorize any ``advisory`` guideline as ``mandatory``
 or ``required``, or as ``disapplied``.
 
 *TODO(pete.levasseur): Add more tips on when this is a good choice for a guideline.*
@@ -139,13 +147,13 @@ or ``required``, or as ``disapplied``.
 ``disapplied``
 ^^^^^^^^^^^^^^
 
-These are guidelines for which compliance is not required. No enforcement is expected, and any
-non-compliance may be disregarded.
+These are guidelines for which compliance **SHOULD NOT** be required. No enforcement is expected, and any
+non-compliance **MAY** be disregarded.
 
-*Note*: Where a guideline does not apply to the chosen release of the Rust compiler, it is treated
+*Note*: Where a guideline does not apply to the chosen release of the Rust compiler, it **MUST** be treated
 as ``disapplied`` for the purposes of coding guideline :ref:`Compliance`.
 
-An organization or project may choose to recategorize any ``disapplied`` guideline as ``mandatory``
+An organization or project **MAY** choose to recategorize any ``disapplied`` guideline as ``mandatory``
 or ``required``, or as ``advisory``.
 
 *TODO(pete.levasseur): Add more tips on when this is a good choice for a guideline.*
@@ -153,18 +161,18 @@ or ``required``, or as ``advisory``.
 ``status``
 ----------
 
-Three possible values, semantics of each differ:
+**MUST** be one of these values:
 
 * ``draft``
 * ``approved``
 * ``deprecated``
 
-Guidelines have a lifecycle where they are first proposed and included as ``draft`` 
-to allow adoption and feedback to accrue. The Coding Guidelines Subcommittee will
+Guidelines have a lifecycle. When they are first proposed and **MUST** be marked as ``draft`` 
+to allow adoption and feedback to accrue. The Coding Guidelines Subcommittee **MUST**
 periodically review ``draft`` guidelines and either promote them to ``approved``
 or demote them to ``deprecated``.
 
-From time to time an ``approved`` guideline will be moved to ``deprecated``. There
+From time to time an ``approved`` guideline **MAY** be moved to ``deprecated``. There
 could be a number of reasons, such as: a guideline which was a poor fit or wrong,
 or in order to make a single guideline more granular and replace it with
 more than one guideline.
@@ -174,19 +182,31 @@ For more, see :ref:`Guideline Lifecycle`.
 ``draft``
 ^^^^^^^^^
 
-These guidelines are not yet considered in force, but are mature enough their enforcement
-is recommended. ``draft`` guideline usage and feedback will help to either promote
-them to ``approved`` or demote them to ``deprecated``. No formal deviation is required
-as outlined in :ref:`Compliance`, but alternative arrangements should be made for documenting
-non-compliances.
+These guidelines are not yet considered in force, but are mature enough they **MAY** be enforced. 
+No formal deviation is required as outlined in :ref:`Compliance`, but alternative arrangements 
+**MUST** be made for documenting non-compliances.
+
+*Note*: ``draft`` guideline usage and feedback will help to either promote them to ``approved`` or demote
+them to ``deprecated``.
 
 ``approved``
 ^^^^^^^^^^^^
 
-These guidelines are considered in force. Any deviations must follow the rule for their
+These guidelines **MUST** be enforced. Any deviations **MUST** follow the rule for their
 appropriate ``category``.
 
 ``deprecated``
 ^^^^^^^^^^^^^^
 
-These guidelines are not in force and must not be applied.
+These guidelines are not in force and **MUST** not be applied.
+
+``fls``
+-------
+
+Each guideline **MUST** have linkage to an appropriate ``paragraph-id`` from the
+Ferrocene Language Specification (FLS). That linkage to the FLS is the means by which
+the guidelines cover exactly the specification, no more and no less.
+
+A single FLS ``paragraph-id`` **MAY** have more than one guideline which applies to it.
+
+
