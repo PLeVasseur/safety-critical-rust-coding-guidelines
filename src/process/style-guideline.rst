@@ -80,7 +80,6 @@ We will examine each part:
 ``guideline``
 =============
 
-
 ::
 
    .. guideline:: Avoid Implicit Integer Wrapping
@@ -92,17 +91,16 @@ We will examine each part:
       :scope: module
       :tags: numerics
 
-``id``
-------
+``guideline`` ``id``
+--------------------
 
-A unique identifier for each guideline. Guideline identifiers **MUST** ``gui_``.
+A unique identifier for each guideline. Guideline identifiers **MUST** begin with ``gui_``.
 
 These identifiers are considered **stable** across releases and **MUST NOT** be removed.
 See ``status`` below for more.
 
 **MUST** be generated using the ``generate-guideline-templates.py`` script to ensure
 compliance.
-
 
 ``category``
 ------------
@@ -158,8 +156,8 @@ or ``required``, or as ``advisory``.
 
 *TODO(pete.levasseur): Add more tips on when this is a good choice for a guideline.*
 
-``status``
-----------
+``guideline`` ``status``
+------------------------
 
 **MUST** be one of these values:
 
@@ -246,7 +244,7 @@ When writing guidelines we **MUST** attempt to lower the ``scope`` as small as p
 allowed by the semantics to improve tractability of their application.
 
 ``module``
-^^^^^^^^^
+^^^^^^^^^^
 
 A guideline which is able to be checked at the module level without reference
 to other modules or crates **MUST** be classified as ``module``.
@@ -271,3 +269,119 @@ The ``tags`` are largely descriptive, not proscriptive means of finding commonal
 similar guidelines.
 
 Each guideline **MUST** have at least one item listed in ``tags``.
+
+Guideline Content
+-----------------
+
+Each ``guideline`` **MUST** have content which follows the options to give an overview of
+what it covers.
+
+Content **SHOULD** aim to be as short and self-contained as possible, while still explaining
+the scope of the guideline.
+
+Content **SHOULD NOT** cover the rationale for the guideline, which is done in the ``rationale`` section.
+
+
+``rationale``
+=============
+
+::
+
+      .. rationale::
+         :id: rat_kYiIiW8R2qD1
+         :status: draft
+
+         In debug builds, Rust performs runtime checks for integer overflow and will panic if detected.
+         However, in release builds (with optimizations enabled), integer operations silently wrap
+         around on overflow, creating potential for silent failures and security vulnerabilities.
+         
+         Safety-critical software requires consistent and predictable behavior across all build
+         configurations. Explicit handling of potential overflow conditions improves code clarity,
+         maintainability, and reduces the risk of numerical errors in production.
+
+``rationale`` ``id``
+--------------------
+
+A unique identifier for each rationale. Rationale identifiers **MUST** begin with ``rat_``.
+
+These identifiers are considered **stable** across releases and **MUST NOT** be removed.
+See ``status`` below for more.
+
+**MUST** be generated using the ``generate-guideline-templates.py`` script to ensure
+compliance.
+
+``rationale`` ``status``
+------------------------
+
+The ``status`` option of a ``rationale`` **MUST** match the ``status`` of its parent ``guideline``.
+
+Rationale Content
+-----------------
+
+TODO(pete.levasseur)
+
+``non_compliant_example``
+=========================
+
+``non_compliant_example`` ``id``
+--------------------------------
+
+A unique identifier for each ``non_compliant_example``. ``non_compliant_example`` identifiers 
+**MUST** begin with ``non_compl_ex_``.
+
+These identifiers are considered **stable** across releases and **MUST NOT** be removed.
+See ``status`` below for more.
+
+**MUST** be generated using the ``generate-guideline-templates.py`` script to ensure
+compliance.
+
+``non_compliant_example`` ``status``
+------------------------------------
+
+The ``status`` option of a ``non_compl_ex`` **MUST** match the ``status`` of its parent ``guideline``.
+
+``non_compliant_example`` Content
+---------------------------------
+
+``non_compliant_example`` Code Explanation
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+TODO(pete.levasseur)
+
+``non_compliant_example`` Code Example
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+TODO(pete.levasseur)
+
+``compliant_example``
+=====================
+
+``compliant_example`` ``id``
+----------------------------
+
+A unique identifier for each ``compliant_example``. ``compliant_example`` identifiers 
+**MUST** begin with ``compl_ex_``.
+
+These identifiers are considered **stable** across releases and **MUST NOT** be removed.
+See ``status`` below for more.
+
+**MUST** be generated using the ``generate-guideline-templates.py`` script to ensure
+compliance.
+
+``compliant_example`` ``status``
+--------------------------------
+
+The ``status`` option of a ``compl_ex`` **MUST** match the ``status`` of its parent ``guideline``.
+
+``compliant_example`` Content
+-----------------------------
+
+``compliant_example`` Code Explanation
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+TODO(pete.levasseur)
+
+``compliant_example`` Code Example
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+TODO(pete.levasseur)
