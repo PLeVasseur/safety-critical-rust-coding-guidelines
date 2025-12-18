@@ -22,6 +22,7 @@
   - [Reviewer Bot Commands](#reviewer-bot-commands)
     - [Overview](#overview)
     - [Available Commands](#available-commands)
+    - [Review Deadlines](#review-deadlines)
     - [Queue Status](#queue-status)
   - [Writing a guideline locally (less typical, not recommended)](#writing-a-guideline-locally-less-typical-not-recommended)
     - [Guideline template](#guideline-template)
@@ -306,6 +307,32 @@ Shows the current queue position, who's next up for review, and who is currently
 ```
 
 Shows all available bot commands with descriptions.
+
+### Review Deadlines
+
+Reviewers have **14 days** to provide initial feedback on assigned issues or PRs. This timeline helps ensure contributors receive timely responses.
+
+#### What Happens If the Deadline Passes
+
+1. **First 14 days**: The assigned reviewer should provide feedback or take action
+2. **After 14 days with no activity**: The bot posts a reminder and the reviewer enters a **14-day transition period**
+3. **After 28 days total**: If still no activity, the reviewer may be transitioned from Producer to Observer status, and the review is reassigned
+
+#### Acceptable Responses
+
+Life happens! Any of these actions will reset the 14-day clock:
+
+- **Post a review comment** - Any substantive feedback counts
+- **Use `/pass [reason]`** - Pass the review to the next person if you can't review it
+- **Use `/away YYYY-MM-DD [reason]`** - Step away temporarily (e.g., "On vacation until 2025-02-15")
+
+#### Examples of Valid Reasons to Pass
+
+- "Not familiar enough with FFI to review this one"
+- "On holiday, please assign to someone else"
+- "Swamped with other work this week"
+
+The goal is communication, not perfection. If you need to pass or step away, just let us know!
 
 ### Queue Status
 
