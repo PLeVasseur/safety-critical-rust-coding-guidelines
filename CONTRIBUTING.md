@@ -315,7 +315,7 @@ Reviewers have **14 days** to provide initial feedback on assigned issues or PRs
 #### What Happens If the Deadline Passes
 
 1. **First 14 days**: The assigned reviewer should provide feedback or take action
-2. **After 14 days with no activity**: The bot posts a reminder and the reviewer enters a **14-day transition period**
+2. **After 14 days with no activity**: The bot posts a reminder and the reviewer enters a **14-day transition period** to Observer status
 3. **After 28 days total**: If still no activity, the reviewer may be transitioned from Producer to Observer status, and the review is reassigned
 
 #### Acceptable Responses
@@ -325,6 +325,21 @@ Life happens! Any of these actions will reset the 14-day clock:
 - **Post a review comment** - Any substantive feedback counts
 - **Use `/pass [reason]`** - Pass the review to the next person if you can't review it
 - **Use `/away YYYY-MM-DD [reason]`** - Step away temporarily (e.g., "On vacation until 2025-02-15")
+
+#### Before You Pass: Consider the Learning Opportunity
+
+Being assigned a review outside your comfort zone can feel daunting, but it's also one of the most effective ways to deepen your Rust knowledge. When you have a concrete goal—understanding *this* guideline about *this* feature—learning becomes focused and sticky in a way that abstract study rarely achieves.
+
+Before reaching for `/pass`, we encourage you to spend about an hour engaging with the unfamiliar material:
+
+- Skim the relevant FLS section and any linked documentation
+- Read through the guideline with fresh eyes, noting what *does* make sense
+- Search for a blog post or example that illuminates the concept
+- Try compiling and tweaking the code examples yourself
+
+You may find that an hour of targeted exploration is enough to provide meaningful feedback, even if you're not an expert. Catching unclear explanations, spotting typos, or asking "what does this term mean?"—these contributions are valuable precisely *because* you're approaching the material without deep familiarity.
+
+That said, `/pass` exists for good reason. If after an honest effort the material remains opaque, or if the guideline requires genuine expertise you don't have (and can't reasonably acquire in an hour), passing to someone better suited is the right call. The goal is thoughtful engagement, not struggling through a review you can't meaningfully contribute to.
 
 #### Examples of Valid Reasons to Pass
 
