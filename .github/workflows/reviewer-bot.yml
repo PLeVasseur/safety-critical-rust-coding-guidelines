@@ -49,7 +49,7 @@ permissions:
 env:
   # Issue number where bot state is stored (create this issue first!)
   # The issue should be pinned and titled something like "📊 Reviewer Bot State"
-  STATE_ISSUE_NUMBER: "314"
+  STATE_ISSUE_NUMBER: "6"
 
 jobs:
   reviewer-bot:
