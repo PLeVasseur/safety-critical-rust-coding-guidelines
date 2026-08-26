@@ -15,14 +15,23 @@ def test_build_freshness_policy_and_required_context() -> None:
     workflow = load_workflow("build-guidelines.yml")
 
     assert "build" in workflow["jobs"]
+    assert workflow["on"]["push"]["branches"] == ["main"]
+    assert "pull_request" in workflow["on"]
+    assert "merge_group" in workflow["on"]
     assert "tags" not in workflow["on"]["push"]
     enforce = workflow["on"]["workflow_call"]["inputs"]["enforce_spec_lock"]
     assert enforce["type"] == "boolean"
     assert enforce["default"] == "false"
+    test_step = next(step for step in workflow["jobs"]["build"]["steps"] if step.get("name") == "Run FLS audit tests")
+    assert "uv run --frozen pytest" in test_step["run"]
+    assert "tests/unit/fls_audit" in test_step["run"]
+    assert "tests/integration/fls_audit" in test_step["run"]
+    assert "tests/contract/fls_audit" in test_step["run"]
     build_step = next(step for step in workflow["jobs"]["build"]["steps"] if step.get("name") == "Build documentation")
     assert "inputs.enforce_spec_lock" in build_step["env"]["ENFORCE_SPEC_LOCK"]
     assert "--ignore-spec-lock-diff" in build_step["run"]
     assert "PIPESTATUS[0]" in build_step["run"]
+    assert build_step["run"].count("|| true") == 3
 
 
 @pytest.mark.contract

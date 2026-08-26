@@ -19,6 +19,8 @@ ACTIONS_BOT_LOGIN = "github-actions[bot]"
 ACTIONS_BOT_ID = 41898282
 MAX_ISSUE_BODY_BYTES = 60_000
 MAX_COMMENT_BODY_BYTES = 60_000
+CONFIRMATION_DELAYS = (0, 1, 2, 4, 8)
+VERIFICATION_DELAYS = (0, 1, 2)
 
 MANAGED_START = "<!-- fls-audit:managed:start -->"
 MANAGED_END = "<!-- fls-audit:managed:end -->"
@@ -623,11 +625,56 @@ def refresh_issue_identity(client: GitHubClient, issue: dict[str, Any], title: s
 
 
 def comment_markers(comments: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [
+    markers = [
         marker
         for comment in comments
         if is_actions_bot_record(comment) and (marker := parse_batch_marker(str(comment.get("body") or ""))) is not None
     ]
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for marker in markers:
+        value = marker["batch_id"]
+        if value in seen:
+            duplicates.add(value)
+        seen.add(value)
+    if duplicates:
+        values = ", ".join(sorted(duplicates))
+        raise AuditIssueError(f"FLS audit issue contains duplicate bot batch markers: {values}")
+    return markers
+
+
+def verify_comment_history(state: dict[str, Any], comments: list[dict[str, Any]]) -> None:
+    transitions = [
+        marker
+        for marker in comment_markers(comments)
+        if marker.get("campaign") == state["campaign"] and marker.get("applied") is not None
+    ]
+    by_sequence: dict[int, dict[str, Any]] = {}
+    for marker in transitions:
+        sequence = int(marker["sequence"])
+        if sequence in by_sequence:
+            raise AuditIssueError(f"FLS audit issue contains multiple bot transitions at sequence {sequence}")
+        by_sequence[sequence] = marker
+
+    expected_sequences = set(range(1, int(state["sequence"]) + 1))
+    actual_sequences = set(by_sequence)
+    if actual_sequences != expected_sequences:
+        raise AuditIssueError(
+            "FLS audit comment history does not match issue sequence "
+            f"{state['sequence']}: found {sorted(actual_sequences)}"
+        )
+    if not by_sequence:
+        return
+
+    latest = by_sequence[int(state["sequence"])]["applied"]
+    if latest["semantic_digest"] != state["applied"]["semantic_digest"]:
+        raise AuditIssueError("Latest FLS audit comment does not match the issue semantic state")
+    for sequence in range(2, int(state["sequence"]) + 1):
+        previous = by_sequence[sequence - 1]["applied"]
+        current = by_sequence[sequence]["applied"]
+        expected = batch_id(state["campaign"], sequence, previous["semantic_digest"], current["semantic_digest"])
+        if by_sequence[sequence]["batch_id"] != expected:
+            raise AuditIssueError(f"FLS audit comment at sequence {sequence} has an invalid historical batch chain")
 
 
 def recover_from_comments(state: dict[str, Any], comments: list[dict[str, Any]]) -> tuple[dict[str, Any], bool]:
@@ -681,13 +728,18 @@ def post_comment_once(
         return
     try:
         client.post_comment(issue_number, body)
-    except (AuditIssueError, requests.RequestException):
-        for delay in (0, 1, 2):
+    except (AuditIssueError, requests.RequestException) as write_error:
+        for delay in CONFIRMATION_DELAYS:
             if delay:
                 time.sleep(delay)
-            if any(marker.get("batch_id") == value for marker in comment_markers(client.comments(issue_number))):
-                return
-        raise
+            try:
+                if any(
+                    marker.get("batch_id") == value for marker in comment_markers(client.comments(issue_number))
+                ):
+                    return
+            except (AuditIssueError, requests.RequestException):
+                continue
+        raise write_error
 
 
 def reconcile_campaign(
@@ -774,14 +826,17 @@ def create_issue_safely(
 ) -> dict[str, Any]:
     try:
         return client.create_issue(title, body, label)
-    except (AuditIssueError, requests.RequestException):
-        for delay in (0, 1, 2):
+    except (AuditIssueError, requests.RequestException) as write_error:
+        for delay in CONFIRMATION_DELAYS:
             if delay:
                 time.sleep(delay)
-            match = find_campaign(audit_issues(client.issues(), title_prefix), campaign)
-            if match:
-                return match[0]
-        raise
+            try:
+                match = find_campaign(audit_issues(client.issues(), title_prefix), campaign)
+                if match:
+                    return match[0]
+            except (AuditIssueError, requests.RequestException):
+                continue
+        raise write_error
 
 
 def event_comment(campaign: str, value: str, message: str, workflow_url: str) -> str:
@@ -834,6 +889,93 @@ def close_legacy_issue(
     post_comment_once(client, LEGACY_ISSUE_NUMBER, event_comment("legacy", value, message, workflow_url), value, client.comments(LEGACY_ISSUE_NUMBER))
     client.patch_issue(LEGACY_ISSUE_NUMBER, {"state": "closed", "state_reason": "completed"})
     return True
+
+
+def verify_reconciliation_once(
+    client: GitHubClient,
+    campaign: str,
+    issue_number: int | None,
+    expected_state: dict[str, Any] | None,
+    title: str,
+    title_prefix: str,
+    label: str,
+    has_drift: bool,
+) -> None:
+    issue_values = audit_issues(client.issues(), title_prefix)
+    find_campaign(issue_values, campaign)
+    obsolete = [
+        issue
+        for issue, state in issue_values
+        if issue.get("state") == "open" and (state is None or state["campaign"] != campaign)
+    ]
+    if obsolete:
+        numbers = ", ".join(f"#{issue.get('number')}" for issue in obsolete)
+        raise AuditIssueError(f"Obsolete FLS audit issues remain open after reconciliation: {numbers}")
+
+    if issue_number is None:
+        if any(state and state["campaign"] == campaign for _, state in issue_values):
+            raise AuditIssueError("Current FLS audit campaign exists unexpectedly after reconciliation")
+        return
+    if expected_state is None:
+        raise AuditIssueError("Current FLS audit issue has no expected state")
+
+    records = [issue for issue, _ in issue_values if int(issue.get("number", 0)) == issue_number]
+    if len(records) != 1:
+        raise AuditIssueError(f"Expected one current FLS audit issue #{issue_number}; found {len(records)}")
+    issue = records[0]
+    state = parse_state(str(issue.get("body") or ""))
+    if state is None or compact_json(state) != compact_json(expected_state):
+        raise AuditIssueError(f"FLS audit issue #{issue_number} state does not match the reconciled report")
+    if issue.get("title") != title or label not in issue_labels(issue):
+        raise AuditIssueError(f"FLS audit issue #{issue_number} identity does not match the current campaign")
+    expected_status = "open" if has_drift else "closed"
+    if issue.get("state") != expected_status:
+        raise AuditIssueError(
+            f"FLS audit issue #{issue_number} is {issue.get('state')}; expected {expected_status}"
+        )
+
+
+def verify_reconciliation(
+    client: GitHubClient,
+    campaign: str,
+    issue_number: int | None,
+    expected_state: dict[str, Any] | None,
+    title: str,
+    title_prefix: str,
+    label: str,
+    has_drift: bool,
+) -> None:
+    issue_error: Exception | None = None
+    for delay in VERIFICATION_DELAYS:
+        if delay:
+            time.sleep(delay)
+        try:
+            verify_reconciliation_once(
+                client, campaign, issue_number, expected_state, title, title_prefix, label, has_drift
+            )
+        except (AuditIssueError, requests.RequestException) as current_error:
+            issue_error = current_error
+            continue
+        break
+    else:
+        assert issue_error is not None
+        raise issue_error
+
+    if issue_number is None:
+        return
+    assert expected_state is not None
+    comment_error: Exception | None = None
+    for delay in VERIFICATION_DELAYS:
+        if delay:
+            time.sleep(delay)
+        try:
+            verify_comment_history(expected_state, client.comments(issue_number))
+        except (AuditIssueError, requests.RequestException) as current_error:
+            comment_error = current_error
+            continue
+        return
+    assert comment_error is not None
+    raise comment_error
 
 
 def reconcile(
@@ -910,6 +1052,7 @@ def reconcile(
 
     current_number = int(issue["number"]) if issue else None
     changed |= close_old_campaigns(client, audit_issue_values, campaign, current_number, workflow_url, bool(items))
+    verify_reconciliation(client, campaign, current_number, state, title, title_prefix, label, bool(items))
 
     if issue is None:
         return "Reconciled old audit campaigns." if changed else "No changes found and no current campaign issue exists."

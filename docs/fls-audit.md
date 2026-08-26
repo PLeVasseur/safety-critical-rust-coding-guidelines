@@ -45,6 +45,13 @@ The workflow is also available through `workflow_dispatch`. Operational manual
 runs must select the repository's default branch and are idempotent: rerunning
 an unchanged audit does not edit the issue or add a comment.
 
+Every required `build` check runs the focused FLS audit unit, integration, and
+workflow contract suite before building the documentation. After each live
+reconciliation, the bot also rereads GitHub and verifies the issue identity,
+open or closed status, campaign state, complete comment sequence, and unique
+batch markers. A failed postcondition leaves the workflow red instead of
+silently accepting incomplete or duplicate audit history.
+
 Maintainers normally close the audit issue from the synchronization PR by
 including `Closes #<issue>` in its body. If no guideline updates are required,
 a maintainer with triage permission may instead comment
