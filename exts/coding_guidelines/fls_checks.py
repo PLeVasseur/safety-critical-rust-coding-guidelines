@@ -39,6 +39,10 @@ def check_fls(app, env):
             app, env, raw_json_data
         )
         if has_differences:
+            if not app.config.enable_spec_lock_consistency:
+                logger.info("Spec lock file differences ignored by configuration")
+                has_differences = False
+        if has_differences:
             error_message = (
                 "The FLS specification has changed since the lock file was created:\n"
             )
@@ -320,14 +324,26 @@ def check_fls_lock_consistency(app, env, fls_raw_data):
         - Boolean indicating whether differences were found
         - List of difference descriptions with affected guidelines (for error reporting)
     """
-    if not app.config.enable_spec_lock_consistency:
-        logger.warn("Spec lock file consistency check disabled")
-        return (False, [])
-
-    import json
-
     logger.info("Checking FLS lock file consistency")
     lock_path = app.confdir / "spec.lock"
+
+    if not lock_path.exists():
+        error_message = f"No FLS lock file found at {lock_path}"
+        logger.error(error_message)
+        raise FLSValidationError(error_message)
+
+    try:
+        with open(lock_path, "r", encoding="utf-8") as f:
+            locked_data = json.load(f)
+    except (json.JSONDecodeError, OSError) as error:
+        error_message = f"Failed to read FLS lock file {lock_path}: {error}"
+        logger.error(error_message)
+        raise FLSValidationError(error_message) from error
+    documents = locked_data.get("documents") if isinstance(locked_data, dict) else None
+    if not isinstance(documents, list) or not documents:
+        error_message = f"Invalid FLS lock file {lock_path}: documents must be a nonempty list"
+        logger.error(error_message)
+        raise FLSValidationError(error_message)
 
     # Get the needs data to find affected guidelines
     data = SphinxNeedsData(env)
@@ -356,19 +372,11 @@ def check_fls_lock_consistency(app, env, fls_raw_data):
                     {"id": need_id, "title": need.get("title", "Untitled")}
                 )
 
-    # If no lock file exists, skip checking
-    if not lock_path.exists():
-        logger.warning(
-            f"No FLS lock file found at {lock_path}, skipping consistency check"
-        )
-        return False, []
-
     try:
-        # Load lock file
-        with open(lock_path, "r", encoding="utf-8") as f:
-            locked_data = json.load(f)
         live_paragraphs = fls_diff.extract_paragraphs(fls_raw_data)
         locked_paragraphs = fls_diff.extract_paragraphs(locked_data)
+        if not locked_paragraphs:
+            raise ValueError("the lock contains no FLS paragraphs")
 
         logger.info(f"Found {len(live_paragraphs)} paragraphs in live data")
         logger.info(f"Found {len(locked_paragraphs)} paragraphs in lock file")
@@ -382,17 +390,20 @@ def check_fls_lock_consistency(app, env, fls_raw_data):
         if has_differences:
             try:
                 temp_path = fls_diff.write_detailed_report(detailed_differences)
-                logger.warning(f"Detailed FLS differences written to: {temp_path}")
+                log = logger.warning if app.config.enable_spec_lock_consistency else logger.info
+                log(f"Detailed FLS differences written to: {temp_path}")
             except Exception as e:
-                logger.error(f"Failed to write detailed differences to temp file: {e}")
+                log = logger.error if app.config.enable_spec_lock_consistency else logger.info
+                log(f"Failed to write detailed differences to temp file: {e}")
 
         summary = fls_diff.build_summary(affected_guidelines, has_differences)
 
         return has_differences, summary
 
-    except (json.JSONDecodeError, IOError) as e:
-        logger.error(f"Error reading or parsing lock file {lock_path}: {e}")
-        return False, [f"Failed to read lock file: {e}"]
+    except (TypeError, ValueError, KeyError) as error:
+        error_message = f"Invalid FLS lock file {lock_path}: {error}"
+        logger.error(error_message)
+        raise FLSValidationError(error_message) from error
 
 
 def insert_fls_coverage(app, env, fls_ids):

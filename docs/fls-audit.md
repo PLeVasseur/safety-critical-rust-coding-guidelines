@@ -16,6 +16,41 @@ uv run python scripts/fls_audit.py
 - Groups changes into added/removed/modified/renumbered-only/header changes.
 - Highlights potential guideline impact and structural reordering.
 
+## CI enforcement policy
+
+Normal pull request, merge queue, and push-to-`main` builds run all FLS
+reference and coverage validation, but do not fail solely because the live FLS
+has moved beyond `src/spec.lock`. The scheduled Nightly workflow and tagged
+release/deploy workflow enforce lock freshness and fail while it is stale.
+
+Local builds enforce freshness by default. Use `--ignore-spec-lock-diff` only
+when intentionally reproducing the nonblocking CI policy:
+
+```shell
+uv run --frozen make.py --ignore-spec-lock-diff
+```
+
+## Rolling audit issue
+
+The scheduled FLS Audit workflow maintains one issue for each committed
+`spec.lock` baseline. The issue body contains the latest cumulative report.
+When the net drift changes, the bot adds one comment listing every newly
+active, updated, and resolved drift item since its last successful update.
+
+If scheduled runs are missed, the next run posts the complete net catch-up as
+one comment. Changes that appeared and were fully reverted between successful
+bot observations are intentionally not reconstructed.
+
+The workflow is also available through `workflow_dispatch`. Operational manual
+runs must select the repository's default branch and are idempotent: rerunning
+an unchanged audit does not edit the issue or add a comment.
+
+Maintainers normally close the audit issue from the synchronization PR by
+including `Closes #<issue>` in its body. If no guideline updates are required,
+a maintainer with triage permission may instead comment
+`@guidelines-bot /accept-no-fls-changes`; that command reruns the audit and
+refuses to proceed if any guideline is affected.
+
 ## Outputs
 
 - `build/fls_audit/report.json`
@@ -128,4 +163,5 @@ uv run --frozen make.py --update-spec-lock-file
 ```
 
 Open a new PR with only the changes needed to rationalize the guidelines with
-the updated FLS text.
+the updated FLS text. Include `Closes #<audit issue>` so the merged
+synchronization closes the corresponding audit campaign.

@@ -8,6 +8,8 @@ on:
 jobs:
   build:
     uses: ./.github/workflows/build-guidelines.yml
+    with:
+      enforce_spec_lock: true
 
   deploy:
     needs: build
@@ -22,7 +24,7 @@ jobs:
           echo "::error::build workflow failed with result: ${{ needs.build.result }}"
           exit 1
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Download build artifacts
         uses: actions/download-artifact@v4
@@ -44,4 +46,3 @@ jobs:
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./build/html
-

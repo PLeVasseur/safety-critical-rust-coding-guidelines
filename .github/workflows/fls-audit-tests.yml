@@ -1,0 +1,40 @@
+name: FLS Audit Tests
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/build-guidelines.yml"
+      - ".github/workflows/deploy.yml"
+      - ".github/workflows/fls-audit.yml"
+      - ".github/workflows/fls-audit-tests.yml"
+      - ".github/workflows/nightly.yml"
+      - "exts/coding_guidelines/fls_checks.py"
+      - "scripts/fls_audit_issue.py"
+      - "tests/contract/fls_audit/**"
+      - "tests/integration/fls_audit/**"
+      - "tests/unit/fls_audit/**"
+      - "pyproject.toml"
+      - "uv.lock"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install dependencies
+        run: uv sync --locked --dev
+
+      - name: Run FLS audit tests
+        run: |
+          uv run pytest tests/unit/fls_audit
+          uv run pytest tests/integration/fls_audit -m integration
+          uv run pytest tests/contract/fls_audit -m contract
