@@ -7,13 +7,14 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
 
 import requests
 
+from scripts.fls_audit_issue_lib.errors import AuditIssueError
+from scripts.fls_audit_issue_lib.github import GitHubClient
+
 DEFAULT_LABEL = "fls-audit"
 DEFAULT_TITLE_PREFIX = "FLS audit:"
-DEFAULT_LABEL_COLOR = "0e8a16"
 LEGACY_ISSUE_NUMBER = 1236
 ACTIONS_BOT_LOGIN = "github-actions[bot]"
 ACTIONS_BOT_ID = 41898282
@@ -40,10 +41,6 @@ BODY_DIGEST_FIELDS = (
     "summary",
     "text",
 )
-
-
-class AuditIssueError(RuntimeError):
-    pass
 
 
 def require_env(name: str) -> str:
@@ -175,19 +172,41 @@ def validate_applied(value: object) -> dict[str, Any]:
     return value
 
 
-def make_state(campaign: str, sequence: int, applied: dict[str, Any]) -> dict[str, Any]:
-    return {"version": 1, "campaign": campaign, "sequence": sequence, "applied": validate_applied(applied)}
+def make_state(
+    campaign: str,
+    sequence: int,
+    applied: dict[str, Any],
+    origin_semantic_digest: str | None = None,
+) -> dict[str, Any]:
+    applied = validate_applied(applied)
+    origin = origin_semantic_digest or applied["semantic_digest"]
+    return {
+        "version": 1,
+        "campaign": campaign,
+        "sequence": sequence,
+        "origin_semantic_digest": origin,
+        "applied": applied,
+    }
 
 
 def validate_state(value: object) -> dict[str, Any]:
-    if not isinstance(value, dict) or set(value) != {"version", "campaign", "sequence", "applied"} or value.get("version") != 1:
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"version", "campaign", "sequence", "origin_semantic_digest", "applied"}
+        or value.get("version") != 1
+    ):
         raise AuditIssueError("Unsupported or malformed FLS audit issue state")
     sequence = value.get("sequence")
     if not isinstance(value.get("campaign"), str) or not DIGEST_RE.fullmatch(value["campaign"]):
         raise AuditIssueError("FLS audit issue state has invalid campaign or sequence")
     if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 0:
         raise AuditIssueError("FLS audit issue state has invalid campaign or sequence")
-    validate_applied(value.get("applied"))
+    origin = value.get("origin_semantic_digest")
+    if not isinstance(origin, str) or not DIGEST_RE.fullmatch(origin):
+        raise AuditIssueError("FLS audit issue state has an invalid origin semantic digest")
+    applied = validate_applied(value.get("applied"))
+    if sequence == 0 and origin != applied["semantic_digest"]:
+        raise AuditIssueError("FLS audit issue origin does not match its sequence-zero state")
     return value
 
 
@@ -386,9 +405,18 @@ def batch_id(campaign: str, sequence: int, previous_digest: str, target_digest: 
     )
 
 
-def batch_marker(campaign: str, sequence: int, value: str, applied: dict[str, Any] | None = None) -> str:
+def batch_marker(
+    campaign: str,
+    sequence: int,
+    value: str,
+    applied: dict[str, Any] | None = None,
+    previous_semantic_digest: str | None = None,
+) -> str:
     marker: dict[str, Any] = {"batch_id": value, "campaign": campaign, "sequence": sequence}
     if applied is not None:
+        if previous_semantic_digest is None:
+            raise AuditIssueError("FLS audit transition marker has no previous semantic digest")
+        marker["previous_semantic_digest"] = previous_semantic_digest
         marker["applied"] = applied
     return f"<!-- fls-audit:batch:v1\n{compact_json(marker)}\n-->"
 
@@ -406,8 +434,11 @@ def parse_batch_marker(body: str) -> dict[str, Any] | None:
         marker = json.loads(matches[0].group("marker"))
     except json.JSONDecodeError as error:
         raise AuditIssueError("FLS audit batch marker is not valid JSON") from error
-    allowed = {"batch_id", "campaign", "sequence", "applied"}
-    if not isinstance(marker, dict) or not {"batch_id", "campaign", "sequence"} <= set(marker) or not set(marker) <= allowed:
+    base = {"batch_id", "campaign", "sequence"}
+    if not isinstance(marker, dict) or not base <= set(marker):
+        raise AuditIssueError("FLS audit batch marker has an invalid schema")
+    expected = base | ({"previous_semantic_digest", "applied"} if "applied" in marker else set())
+    if set(marker) != expected:
         raise AuditIssueError("FLS audit batch marker has an invalid schema")
     sequence = marker.get("sequence")
     if not isinstance(marker.get("batch_id"), str) or not DIGEST_RE.fullmatch(marker["batch_id"]):
@@ -417,6 +448,9 @@ def parse_batch_marker(body: str) -> dict[str, Any] | None:
     if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 0:
         raise AuditIssueError("FLS audit batch marker has an invalid sequence")
     if "applied" in marker:
+        previous = marker.get("previous_semantic_digest")
+        if not isinstance(previous, str) or not DIGEST_RE.fullmatch(previous):
+            raise AuditIssueError("FLS audit batch marker has an invalid previous semantic digest")
         validate_applied(marker["applied"])
     return marker
 
@@ -463,7 +497,7 @@ def transition_comment(
         ids = {key.removeprefix("paragraph:") for key in new + updated if key.startswith("paragraph:")}
         lines.extend(text_diffs(report, ids))
     lines.extend(["", "### Currently affected guidelines", *affected_guidelines(report), ""])
-    lines.append(batch_marker(campaign, sequence, value, current))
+    lines.append(batch_marker(campaign, sequence, value, current, previous["semantic_digest"]))
     body = "\n".join(lines)
     if len(body.encode("utf-8")) <= MAX_COMMENT_BODY_BYTES:
         return body
@@ -497,94 +531,6 @@ def is_actions_bot_record(value: dict[str, Any]) -> bool:
         and user.get("id") == ACTIONS_BOT_ID
         and user.get("type") == "Bot"
     )
-
-
-class GitHubClient:
-    def __init__(self, token: str, owner: str, repo: str, session: requests.Session | None = None):
-        self.owner = owner
-        self.repo = repo
-        self.session = session or requests.Session()
-        self.session.headers.update(
-            {
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-            }
-        )
-
-    def url(self, endpoint: str) -> str:
-        return endpoint if endpoint.startswith("https://") else f"https://api.github.com/repos/{self.owner}/{self.repo}/{endpoint}"
-
-    def request(
-        self,
-        method: str,
-        endpoint: str,
-        *,
-        data: dict[str, Any] | None = None,
-        params: dict[str, str] | None = None,
-    ) -> requests.Response:
-        response = self.session.request(method, self.url(endpoint), json=data, params=params, timeout=30)
-        if response.status_code >= 400:
-            raise AuditIssueError(f"GitHub {method} {endpoint} failed: {response.status_code} {response.text}")
-        return response
-
-    def json(self, response: requests.Response) -> object:
-        if not response.content:
-            return {}
-        try:
-            return response.json()
-        except requests.JSONDecodeError as error:
-            raise AuditIssueError("GitHub response was not valid JSON") from error
-
-    def paginate(self, endpoint: str, params: dict[str, str]) -> list[dict[str, Any]]:
-        values: list[dict[str, Any]] = []
-        next_endpoint: str | None = endpoint
-        next_params: dict[str, str] | None = params
-        while next_endpoint:
-            response = self.request("GET", next_endpoint, params=next_params)
-            data = self.json(response)
-            if not isinstance(data, list):
-                raise AuditIssueError(f"GitHub pagination response for {endpoint} was not a list")
-            values.extend(value for value in data if isinstance(value, dict))
-            next_endpoint = response.links.get("next", {}).get("url")
-            next_params = None
-        return values
-
-    def ensure_label(self, label: str) -> None:
-        endpoint = f"labels/{quote(label, safe='')}"
-        response = self.session.request("GET", self.url(endpoint), timeout=30)
-        if response.status_code == 200:
-            return
-        if response.status_code != 404:
-            raise AuditIssueError(f"Failed to check label {label}: {response.status_code} {response.text}")
-        self.request("POST", "labels", data={"name": label, "color": DEFAULT_LABEL_COLOR, "description": "FLS audit results"})
-
-    def issues(self) -> list[dict[str, Any]]:
-        return self.paginate("issues", {"state": "all", "per_page": "100"})
-
-    def issue(self, number: int) -> dict[str, Any]:
-        value = self.json(self.request("GET", f"issues/{number}"))
-        if not isinstance(value, dict):
-            raise AuditIssueError(f"GitHub issue #{number} response was malformed")
-        return value
-
-    def comments(self, number: int) -> list[dict[str, Any]]:
-        return self.paginate(f"issues/{number}/comments", {"per_page": "100"})
-
-    def patch_issue(self, number: int, data: dict[str, Any]) -> dict[str, Any]:
-        value = self.json(self.request("PATCH", f"issues/{number}", data=data))
-        if not isinstance(value, dict):
-            raise AuditIssueError(f"GitHub issue #{number} update response was malformed")
-        return value
-
-    def create_issue(self, title: str, body: str, label: str) -> dict[str, Any]:
-        value = self.json(self.request("POST", "issues", data={"title": title, "body": body, "labels": [label]}))
-        if not isinstance(value, dict) or not value.get("number"):
-            raise AuditIssueError("GitHub create issue response was malformed")
-        return value
-
-    def post_comment(self, number: int, body: str) -> None:
-        self.request("POST", f"issues/{number}/comments", data={"body": body})
 
 
 def audit_issues(issues: list[dict[str, Any]], title_prefix: str) -> list[tuple[dict[str, Any], dict[str, Any] | None]]:
@@ -669,11 +615,15 @@ def verify_comment_history(state: dict[str, Any], comments: list[dict[str, Any]]
     latest = by_sequence[int(state["sequence"])]["applied"]
     if latest["semantic_digest"] != state["applied"]["semantic_digest"]:
         raise AuditIssueError("Latest FLS audit comment does not match the issue semantic state")
-    for sequence in range(2, int(state["sequence"]) + 1):
-        previous = by_sequence[sequence - 1]["applied"]
+    for sequence in range(1, int(state["sequence"]) + 1):
+        previous_digest = (
+            state["origin_semantic_digest"]
+            if sequence == 1
+            else by_sequence[sequence - 1]["applied"]["semantic_digest"]
+        )
         current = by_sequence[sequence]["applied"]
-        expected = batch_id(state["campaign"], sequence, previous["semantic_digest"], current["semantic_digest"])
-        if by_sequence[sequence]["batch_id"] != expected:
+        expected = batch_id(state["campaign"], sequence, previous_digest, current["semantic_digest"])
+        if by_sequence[sequence]["previous_semantic_digest"] != previous_digest or by_sequence[sequence]["batch_id"] != expected:
             raise AuditIssueError(f"FLS audit comment at sequence {sequence} has an invalid historical batch chain")
 
 
@@ -709,12 +659,17 @@ def recover_from_comments(state: dict[str, Any], comments: list[dict[str, Any]])
         expected_batch = batch_id(
             state["campaign"], sequence, previous["semantic_digest"], applied["semantic_digest"]
         )
-        if marker["batch_id"] != expected_batch:
+        if marker["previous_semantic_digest"] != previous["semantic_digest"] or marker["batch_id"] != expected_batch:
             raise AuditIssueError(f"Audit comment at sequence {sequence} has an invalid batch chain")
         previous = applied
         expected_sequence += 1
         recovered = True
-    return make_state(state["campaign"], expected_sequence - 1, previous) if recovered else state, recovered
+    return (
+        make_state(state["campaign"], expected_sequence - 1, previous, state["origin_semantic_digest"])
+        if recovered
+        else state,
+        recovered,
+    )
 
 
 def post_comment_once(
@@ -759,13 +714,15 @@ def reconcile_campaign(
     transitioned = previous["semantic_digest"] != current["semantic_digest"]
     if previous["semantic_digest"] == current["semantic_digest"]:
         if recovered or previous["body_digest"] != current["body_digest"]:
-            state = make_state(state["campaign"], state["sequence"], current)
+            state = make_state(state["campaign"], state["sequence"], current, state["origin_semantic_digest"])
     else:
         sequence = int(state["sequence"]) + 1
         value = batch_id(state["campaign"], sequence, previous["semantic_digest"], current["semantic_digest"])
         comment = transition_comment(report, previous, current, state["campaign"], sequence, value, workflow_url)
+        next_state = make_state(state["campaign"], sequence, current, state["origin_semantic_digest"])
+        managed_body(str(issue.get("body") or ""), report, report_md, next_state, workflow_url)
         post_comment_once(client, number, comment, value, comments)
-        state = make_state(state["campaign"], sequence, current)
+        state = next_state
     latest = client.issue(number)
     latest_body = str(latest.get("body") or "")
     latest_state = parse_state(latest_body)
@@ -797,17 +754,19 @@ def legacy_baseline(issue: dict[str, Any], label: str, title_prefix: str) -> str
         return None
     if "## What to do" not in body or "# FLS Spec Lock Audit Report" not in body:
         raise AuditIssueError(f"Legacy audit issue #{LEGACY_ISSUE_NUMBER} has an unrecognized body")
-    match = LEGACY_BASELINE_RE.search(body)
-    if not match:
-        raise AuditIssueError(f"Legacy audit issue #{LEGACY_ISSUE_NUMBER} has no baseline commit")
-    return match.group("commit")
+    matches = list(LEGACY_BASELINE_RE.finditer(body))
+    if len(matches) != 1:
+        raise AuditIssueError(
+            f"Pre-campaign audit issue #{LEGACY_ISSUE_NUMBER} must contain exactly one baseline commit"
+        )
+    return matches[0].group("commit")
 
 
 def archived_legacy_body(body: str) -> str:
     return "\n".join(
         [
             "<details>",
-            "<summary>Legacy pre-campaign audit body</summary>",
+            "<summary>Pre-campaign audit body</summary>",
             "",
             body.rstrip(),
             "",

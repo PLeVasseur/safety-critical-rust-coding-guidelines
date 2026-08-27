@@ -78,3 +78,46 @@ def test_build_shell_fails_when_successful_command_prints_traceback(tmp_path: Pa
 
     assert result.returncode == 1
     assert "Build errors detected in log" in result.stdout
+
+
+@pytest.mark.integration
+def test_build_shell_copies_sphinx_traceback(tmp_path: Path) -> None:
+    source = Path("/tmp") / f"sphinx-err-{tmp_path.parent.name}-{tmp_path.name}.log"
+    source.write_text("sphinx traceback\n", encoding="utf-8")
+    try:
+        result, _ = run_build_script(
+            tmp_path,
+            enforce=False,
+            uv_output=f"Traceback (most recent call last)\n{source}",
+        )
+    finally:
+        source.unlink(missing_ok=True)
+
+    assert result.returncode == 1
+    assert (tmp_path / "build" / "sphinx_traceback.log").read_text(encoding="utf-8") == "sphinx traceback\n"
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("uv_exit", [0, 17])
+def test_build_shell_copies_fls_difference_without_masking_status(tmp_path: Path, uv_exit: int) -> None:
+    source = Path("/tmp") / f"fls_diff_{tmp_path.parent.name}-{tmp_path.name}.txt"
+    source.write_text("spec lock difference\n", encoding="utf-8")
+    try:
+        result, _ = run_build_script(tmp_path, enforce=False, uv_exit=uv_exit, uv_output=str(source))
+    finally:
+        source.unlink(missing_ok=True)
+
+    assert result.returncode == uv_exit
+    assert (tmp_path / "build" / "spec_lock_file_differences.txt").read_text(encoding="utf-8") == (
+        "spec lock difference\n"
+    )
+
+
+@pytest.mark.integration
+def test_build_shell_missing_diagnostic_does_not_mask_status(tmp_path: Path) -> None:
+    missing = Path("/tmp") / f"fls_diff_missing-{tmp_path.parent.name}-{tmp_path.name}.txt"
+
+    result, _ = run_build_script(tmp_path, enforce=False, uv_exit=17, uv_output=str(missing))
+
+    assert result.returncode == 17
+    assert not (tmp_path / "build" / "spec_lock_file_differences.txt").exists()

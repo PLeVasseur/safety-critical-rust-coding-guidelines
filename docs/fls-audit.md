@@ -42,11 +42,12 @@ one comment. Changes that appeared and were fully reverted between successful
 bot observations are intentionally not reconstructed.
 
 The workflow is also available through `workflow_dispatch`. Operational manual
-runs must select the repository's default branch and are idempotent: rerunning
-an unchanged audit does not edit the issue or add a comment.
+runs must select the repository's default branch. Rerunning an unchanged audit
+does not edit the issue or add a comment when prior writes are visible and the
+stored history is valid.
 
-Every required `build` check runs the focused FLS audit unit, integration, and
-workflow contract suite before building the documentation. After each live
+Every required `build` check depends on a parallel job running the focused FLS
+audit unit, integration, and workflow contract suite. After each live
 reconciliation, the bot also rereads GitHub and verifies the issue identity,
 open or closed status, campaign state, complete comment sequence, and unique
 batch markers. A failed postcondition leaves the workflow red instead of
@@ -57,6 +58,69 @@ including `Closes #<issue>` in its body. If no guideline updates are required,
 a maintainer with triage permission may instead comment
 `@guidelines-bot /accept-no-fls-changes`; that command reruns the audit and
 refuses to proceed if any guideline is affected.
+
+## Consistency and retry limits
+
+GitHub issue and comment POST endpoints do not support idempotency keys, so the
+audit cannot guarantee exactly-once delivery. It provides best-effort uniqueness
+with detectable ambiguity:
+
+- Transition comments carry deterministic batch markers and are posted before
+  the issue body advances.
+- A rerun can recover a visible comment whose issue-body update failed.
+- Safe reads retry transient network failures, `429`, retryable rate-limit
+  `403`, and `5xx` responses for at most 15 seconds.
+- `Retry-After` is honored when it fits within that budget.
+- Ambiguous POST and managed-body PATCH operations are never blindly replayed.
+- Duplicate, conflicting, or incomplete bot history fails closed.
+
+The bot preflights the expected transition comment and issue body before
+posting. A concurrent human edit can still make the refetched body exceed the
+limit after the comment is visible; the comment marker preserves the state
+needed for a later reviewed recovery.
+
+## Trust boundary
+
+Managed state is accepted only from REST records authored by the GitHub.com
+Actions bot, `github-actions[bot]` with numeric ID `41898282`. This identity is
+repository-wide: it does not identify a specific workflow or the last
+maintainer who edited an issue body. Repository maintainers and other workflows
+with issue-write permission remain inside the trust boundary.
+
+The workflow concurrency group is the supported serialization mechanism.
+Concurrent direct invocations of the mutating issue script are unsupported.
+
+## Troubleshooting a failed reconciliation
+
+1. Preserve the issue body, raw comments, workflow URL, and the run's JSON,
+   Markdown, and ANSI report artifacts before editing anything.
+2. Read the first reconciliation or postcondition error in the workflow log.
+3. If the failure is only a bounded visibility or rate-limit timeout and no
+   malformed, missing, duplicate, or conflicting marker was reported, rerun the
+   unchanged workflow once from the default branch.
+4. If history is missing, duplicated, conflicting, or malformed, stop. Do not
+   fabricate comments or manually rewrite hidden state. Use a reviewed repair
+   based on the preserved evidence.
+5. If a payload is oversized, use the complete workflow artifact for review and
+   change the rendering/state policy in a reviewed code change; do not truncate
+   the issue manually.
+
+## One-time issue #1236 adoption
+
+Issue `#1236` predates campaign markers. The reconciler has one narrow adoption
+path for that exact issue. It requires the expected Actions bot author, title
+form, `fls-audit` label, generated report headings, exactly one valid baseline
+commit, and no conflicting campaign marker. The baseline must match the current
+report before the issue can become the current campaign. Its complete old body
+is archived outside the managed region and its comments are left untouched.
+
+Immediately before the first production audit using this code, recheck those
+assumptions. If the issue changed, stop rather than broadening the recognizer.
+
+Remove the dedicated adoption code and tests after the first production run has
+adopted or definitively closed `#1236`, the issue has managed state or is clearly
+historical, and a second unchanged run performs zero issue writes. This is not a
+general legacy compatibility mechanism.
 
 ## Outputs
 

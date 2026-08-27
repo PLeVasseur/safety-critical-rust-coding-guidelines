@@ -145,11 +145,11 @@ def test_create_then_identical_run_performs_no_writes() -> None:
     client = FakeGitHubClient()
     report = report_with_changes()
 
-    reconcile(client, report)
-    assert [mutation[0] for mutation in client.mutations] == ["create"]
+    assert reconcile(client, report) == "Reconciled audit issue #2000."
+    assert client.mutations == [("create", 2000)]
 
     client.mutations.clear()
-    reconcile(client, report)
+    assert reconcile(client, report) == "Audit issue #2000 is already current."
     assert client.mutations == []
 
 
@@ -161,14 +161,32 @@ def test_changed_run_posts_one_comment_and_updates_state() -> None:
 
     current = report_with_changes(live_checksum="live-b")
     current["metadata"]["current_commit"] = "c" * 40
-    reconcile(client, current)
+    assert reconcile(client, current) == "Reconciled audit issue #2000."
 
     number = next(iter(client.issue_values))
-    assert [mutation[0] for mutation in client.mutations] == ["comment", "patch"]
+    assert client.mutations == [("comment", 2000), ("patch", 2000)]
     assert len(client.comment_values[number]) == 1
     state = audit.parse_state(client.issue_values[number]["body"])
     assert state is not None
     assert state["sequence"] == 1
+
+
+@pytest.mark.integration
+def test_transition_body_overflow_fails_before_comment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = FakeGitHubClient()
+    reconcile(client, report_with_changes())
+    number = next(iter(client.issue_values))
+    current_size = len(client.issue_values[number]["body"].encode("utf-8"))
+    monkeypatch.setattr(audit, "MAX_ISSUE_BODY_BYTES", current_size + 100)
+    client.mutations.clear()
+
+    with pytest.raises(audit.AuditIssueError, match="Compact issue body"):
+        reconcile(client, report_with_changes(live_checksum="x" * 1_000))
+
+    assert client.mutations == []
+    assert client.comment_values.get(number, []) == []
 
 
 @pytest.mark.integration
@@ -321,7 +339,9 @@ def test_untrusted_comment_marker_cannot_advance_state() -> None:
     client.comment_values[number] = [
         {
             "id": 1,
-            "body": audit.batch_marker(state["campaign"], 1, value, target),
+            "body": audit.batch_marker(
+                state["campaign"], 1, value, target, state["applied"]["semantic_digest"]
+            ),
             "user": {"login": "contributor", "id": 7, "type": "User"},
         }
     ]
@@ -385,9 +405,10 @@ def test_clean_run_comments_and_closes_campaign() -> None:
     clean["summary"] = dict.fromkeys(clean["summary"], 0)
     clean["text"] = {"added": {}, "removed": {}, "content_diffs": []}
 
-    reconcile(client, clean)
+    assert reconcile(client, clean) == "Reconciled audit issue #2000."
 
     number = next(iter(client.issue_values))
+    assert client.mutations == [("comment", 2000), ("patch", 2000), ("patch", 2000)]
     assert client.issue_values[number]["state"] == "closed"
     assert len(client.comment_values[number]) == 1
     state = audit.parse_state(client.issue_values[number]["body"])
@@ -434,12 +455,37 @@ def test_matching_legacy_issue_is_adopted_without_new_issue() -> None:
         "user": copy.deepcopy(BOT_USER),
     }
 
-    reconcile(client, report)
+    assert reconcile(client, report) == f"Reconciled audit issue #{audit.LEGACY_ISSUE_NUMBER}."
 
     assert set(client.issue_values) == {audit.LEGACY_ISSUE_NUMBER}
+    assert client.mutations == [("patch", audit.LEGACY_ISSUE_NUMBER)]
     assert client.issue_values[audit.LEGACY_ISSUE_NUMBER]["title"].startswith("FLS audit: spec.lock drift")
-    assert "Legacy pre-campaign audit body" in client.issue_values[audit.LEGACY_ISSUE_NUMBER]["body"]
+    assert "Pre-campaign audit body" in client.issue_values[audit.LEGACY_ISSUE_NUMBER]["body"]
     assert audit.parse_state(client.issue_values[audit.LEGACY_ISSUE_NUMBER]["body"]) is not None
+
+
+@pytest.mark.integration
+def test_pre_campaign_issue_with_multiple_baselines_fails_closed() -> None:
+    client = FakeGitHubClient()
+    report = report_with_changes()
+    baseline = report["metadata"]["baseline_commit"]
+    client.issue_values[audit.LEGACY_ISSUE_NUMBER] = {
+        "number": audit.LEGACY_ISSUE_NUMBER,
+        "title": "FLS audit: changes detected (2026-08-27)",
+        "body": (
+            "## What to do\nlegacy\n\n# FLS Spec Lock Audit Report\n\n"
+            f"- Baseline commit: `{baseline}`\n"
+            f"- Baseline commit: `{baseline}`\n"
+        ),
+        "labels": [{"name": "fls-audit"}],
+        "state": "open",
+        "user": copy.deepcopy(BOT_USER),
+    }
+
+    with pytest.raises(audit.AuditIssueError, match="exactly one baseline commit"):
+        reconcile(client, report)
+
+    assert client.mutations == []
 
 
 @pytest.mark.integration
@@ -542,7 +588,7 @@ def test_posted_comment_state_is_recovered_on_next_run() -> None:
     number, issue, state = current_issue(client)
     target = audit.make_applied(second, "# Report\n", audit.canonical_items(second))
     value = audit.batch_id(state["campaign"], 1, state["applied"]["semantic_digest"], target["semantic_digest"])
-    marker = audit.batch_marker(state["campaign"], 1, value, target)
+    marker = audit.batch_marker(state["campaign"], 1, value, target, state["applied"]["semantic_digest"])
     client.comment_values[number] = [{"id": 1, "body": marker, "user": copy.deepcopy(BOT_USER)}]
     client.mutations.clear()
 
@@ -563,7 +609,9 @@ def test_posted_comment_state_is_used_as_base_for_later_catch_up() -> None:
     number, issue, state = current_issue(client)
     missed_target = audit.make_applied(missed, "# Report\n", audit.canonical_items(missed))
     value = audit.batch_id(state["campaign"], 1, state["applied"]["semantic_digest"], missed_target["semantic_digest"])
-    marker = audit.batch_marker(state["campaign"], 1, value, missed_target)
+    marker = audit.batch_marker(
+        state["campaign"], 1, value, missed_target, state["applied"]["semantic_digest"]
+    )
     client.comment_values[number] = [{"id": 1, "body": marker, "user": copy.deepcopy(BOT_USER)}]
     client.mutations.clear()
 
@@ -618,9 +666,13 @@ def test_new_lock_campaign_creates_new_issue_and_closes_old() -> None:
     new_lock = {"documents": [{"link": "two.html", "sections": [{"id": "fls_two"}]}]}
     client.mutations.clear()
 
-    audit.reconcile(client, report, "# Report\n", new_lock, "fls-audit", "FLS audit:")
+    assert (
+        audit.reconcile(client, report, "# Report\n", new_lock, "fls-audit", "FLS audit:")
+        == "Reconciled audit issue #2001."
+    )
 
     assert len(client.issue_values) == 2
+    assert client.mutations == [("create", 2001), ("comment", 2000), ("patch", 2000)]
     assert client.issue_values[old_number]["state"] == "closed"
     assert len(client.comment_values[old_number]) == 1
 

@@ -21,20 +21,9 @@ jobs:
   check_rust_examples:
     uses: ./.github/workflows/check-rust-examples.yml
 
-  build:
-    needs: check_rust_examples
-    # Always run so that 'build' (the required status check) explicitly fails
-    # when check_rust_examples fails, rather than being skipped.
-    # Skipped jobs don't block merge queue, but failed jobs do.
-    if: always()
+  fls_audit_tests:
     runs-on: ubuntu-latest
     steps:
-      - name: Fail if example checks failed
-        if: needs.check_rust_examples.result != 'success'
-        run: |
-          echo "::error::check_rust_examples workflow failed with result: ${{ needs.check_rust_examples.result }}"
-          echo "One or more Rust example checks did not pass. See the check_rust_examples job for details."
-          exit 1
       - name: Checkout repository
         uses: actions/checkout@v4
       - name: Install uv
@@ -45,6 +34,28 @@ jobs:
           tests/unit/fls_audit
           tests/integration/fls_audit
           tests/contract/fls_audit
+
+  build:
+    needs:
+      - check_rust_examples
+      - fls_audit_tests
+    # Always run so that 'build' (the required status check) explicitly fails
+    # when a prerequisite fails, rather than being skipped.
+    # Skipped jobs don't block merge queue, but failed jobs do.
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if prerequisite checks failed
+        if: needs.check_rust_examples.result != 'success' || needs.fls_audit_tests.result != 'success'
+        run: |
+          echo "::error::check_rust_examples workflow failed with result: ${{ needs.check_rust_examples.result }}"
+          echo "::error::fls_audit_tests job finished with result: ${{ needs.fls_audit_tests.result }}"
+          echo "One or more prerequisite checks did not pass. See the prerequisite jobs for details."
+          exit 1
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
       - name: Build documentation
         env:
           ENFORCE_SPEC_LOCK: ${{ inputs.enforce_spec_lock || false }}

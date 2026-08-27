@@ -22,12 +22,21 @@ def test_build_freshness_policy_and_required_context() -> None:
     enforce = workflow["on"]["workflow_call"]["inputs"]["enforce_spec_lock"]
     assert enforce["type"] == "boolean"
     assert enforce["default"] == "false"
-    test_step = next(step for step in workflow["jobs"]["build"]["steps"] if step.get("name") == "Run FLS audit tests")
+    test_job = workflow["jobs"]["fls_audit_tests"]
+    test_step = next(step for step in test_job["steps"] if step.get("name") == "Run FLS audit tests")
     assert "uv run --frozen pytest" in test_step["run"]
     assert "tests/unit/fls_audit" in test_step["run"]
     assert "tests/integration/fls_audit" in test_step["run"]
     assert "tests/contract/fls_audit" in test_step["run"]
-    build_step = next(step for step in workflow["jobs"]["build"]["steps"] if step.get("name") == "Build documentation")
+    build = workflow["jobs"]["build"]
+    assert set(build["needs"]) == {"check_rust_examples", "fls_audit_tests"}
+    assert build["if"] == "always()"
+    prerequisite = next(step for step in build["steps"] if step.get("name") == "Fail if prerequisite checks failed")
+    assert "needs.check_rust_examples.result" in prerequisite["if"]
+    assert "needs.fls_audit_tests.result" in prerequisite["if"]
+    assert "exit 1" in prerequisite["run"]
+    assert all(step.get("name") != "Run FLS audit tests" for step in build["steps"])
+    build_step = next(step for step in build["steps"] if step.get("name") == "Build documentation")
     assert "inputs.enforce_spec_lock" in build_step["env"]["ENFORCE_SPEC_LOCK"]
     assert "--ignore-spec-lock-diff" in build_step["run"]
     assert "PIPESTATUS[0]" in build_step["run"]

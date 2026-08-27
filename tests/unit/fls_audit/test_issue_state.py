@@ -1,4 +1,5 @@
 import copy
+import hashlib
 
 import pytest
 
@@ -124,6 +125,29 @@ def test_managed_body_preserves_human_text() -> None:
     assert audit.parse_state(updated) == state
 
 
+def test_state_and_rendering_characterization() -> None:
+    report = report_with_changes()
+    applied = audit.make_applied(report, "# Current report\n", audit.canonical_items(report))
+    state = audit.make_state(audit.campaign_id(spec_lock()), 0, applied)
+    body = audit.managed_body("", report, "# Current report\n", state, "")
+
+    current_report = report_with_changes(live_checksum="newer")
+    current_report["changes"]["changed"] = []
+    current = audit.make_applied(current_report, "# Report\n", audit.canonical_items(current_report))
+    value = audit.batch_id(state["campaign"], 1, applied["semantic_digest"], current["semantic_digest"])
+    comment = audit.transition_comment(current_report, applied, current, state["campaign"], 1, value, "")
+
+    assert hashlib.sha256(audit.state_marker(state).encode()).hexdigest() == (
+        "33fc5cbda9fd109c9c8330b0b15afe26fc7a08348d4e83d997bfba0d8a85a1dd"
+    )
+    assert hashlib.sha256(body.encode()).hexdigest() == (
+        "d8af32ac867ed1aec7a6351f27dd455687009a7437a4c57207bfa41fb44a6a31"
+    )
+    assert hashlib.sha256(comment.encode()).hexdigest() == (
+        "f12f2982578d2dc338c31cc68ed3043bcf545e71a6eb0d4287c3d41ca35deb9f"
+    )
+
+
 def test_transition_comment_lists_all_net_changes() -> None:
     previous_report = report_with_changes()
     current_report = report_with_changes(live_checksum="newer")
@@ -142,6 +166,7 @@ def test_transition_comment_lists_all_net_changes() -> None:
     assert "`fls_changed`" in comment
     marker = audit.parse_batch_marker(comment)
     assert marker is not None and marker["batch_id"] == value
+    assert marker["previous_semantic_digest"] == previous["semantic_digest"]
 
 
 def test_compact_comment_fails_before_silent_truncation(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -171,6 +196,11 @@ def test_state_requires_consistent_schema_and_managed_region() -> None:
     with pytest.raises(audit.AuditIssueError, match="does not match"):
         audit.validate_state(damaged)
 
+    damaged = copy.deepcopy(state)
+    damaged["origin_semantic_digest"] = "sha256:" + "0" * 64
+    with pytest.raises(audit.AuditIssueError, match="sequence-zero state"):
+        audit.validate_state(damaged)
+
     with pytest.raises(audit.AuditIssueError, match="outside its managed region"):
         audit.parse_state(audit.state_marker(state))
 
@@ -188,12 +218,30 @@ def test_comment_recovery_rejects_sequence_gap() -> None:
     state = audit.make_state(campaign, 0, previous)
     value = audit.batch_id(campaign, 2, previous["semantic_digest"], current["semantic_digest"])
     comment = {
-        "body": audit.batch_marker(campaign, 2, value, current),
+        "body": audit.batch_marker(campaign, 2, value, current, previous["semantic_digest"]),
         "user": {"login": audit.ACTIONS_BOT_LOGIN, "id": audit.ACTIONS_BOT_ID, "type": "Bot"},
     }
 
     with pytest.raises(audit.AuditIssueError, match="sequence jumps"):
         audit.recover_from_comments(state, [comment])
+
+
+def test_first_transition_is_grounded_in_campaign_origin() -> None:
+    report = report_with_changes()
+    current_report = report_with_changes(live_checksum="new")
+    origin = audit.make_applied(report, "# Report\n", audit.canonical_items(report))
+    current = audit.make_applied(current_report, "# Report\n", audit.canonical_items(current_report))
+    campaign = audit.campaign_id(spec_lock())
+    state = audit.make_state(campaign, 1, current, origin["semantic_digest"])
+    wrong_previous = "sha256:" + "0" * 64
+    value = audit.batch_id(campaign, 1, wrong_previous, current["semantic_digest"])
+    comment = {
+        "body": audit.batch_marker(campaign, 1, value, current, wrong_previous),
+        "user": {"login": audit.ACTIONS_BOT_LOGIN, "id": audit.ACTIONS_BOT_ID, "type": "Bot"},
+    }
+
+    with pytest.raises(audit.AuditIssueError, match="invalid historical batch chain"):
+        audit.verify_comment_history(state, [comment])
 
 
 def test_compact_issue_body_ignores_workflow_url_for_idempotence() -> None:
