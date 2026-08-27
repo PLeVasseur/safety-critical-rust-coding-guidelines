@@ -2,6 +2,11 @@ name: Release Preflight
 
 on:
   workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Exact 40-character commit SHA to validate and release
+        required: true
+        type: string
 
 permissions: {}
 
@@ -21,22 +26,26 @@ jobs:
       - name: Require commit from default branch
         env:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
         run: |
+          if [[ ! "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::release_sha must be a full lowercase 40-character commit SHA."
+            exit 1
+          fi
+          if [[ "$RELEASE_SHA" != "$GITHUB_SHA" ]]; then
+            echo "::error::release_sha $RELEASE_SHA does not match selected ref commit $GITHUB_SHA."
+            exit 1
+          fi
           git fetch origin "$DEFAULT_BRANCH"
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" "origin/$DEFAULT_BRANCH"; then
-            echo "::error::Release commit $GITHUB_SHA is not reachable from $DEFAULT_BRANCH."
+          if ! git merge-base --is-ancestor "$RELEASE_SHA" "origin/$DEFAULT_BRANCH"; then
+            echo "::error::Release commit $RELEASE_SHA is not reachable from $DEFAULT_BRANCH."
             exit 1
           fi
 
       - name: Mark preflight pending
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
-            -f state=pending \
-            -f context=release-preflight \
-            -f description="Release preflight is running" \
-            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+        run: bash scripts/fls_release_status.sh pending
 
   build:
     needs: validate
@@ -57,25 +66,12 @@ jobs:
       contents: read
       statuses: write
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Record preflight result
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VALIDATE_RESULT: ${{ needs.validate.result }}
           BUILD_RESULT: ${{ needs.build.result }}
-        run: |
-          state=failure
-          description="Release preflight failed"
-          if [[ "$VALIDATE_RESULT" == "success" && "$BUILD_RESULT" == "success" ]]; then
-            state=success
-            description="Release preflight passed"
-          fi
-
-          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
-            -f state="$state" \
-            -f context=release-preflight \
-            -f description="$description" \
-            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-
-          if [[ "$state" != "success" ]]; then
-            exit 1
-          fi
+        run: bash scripts/fls_release_status.sh preflight-result
