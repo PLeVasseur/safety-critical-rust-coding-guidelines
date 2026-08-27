@@ -10,6 +10,13 @@ def load_workflow(name: str) -> dict:
     return yaml.load((ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
 
 
+def assert_checkout_precedes_script(job: dict, command: str) -> None:
+    steps = job["steps"]
+    checkout_index = next(index for index, step in enumerate(steps) if step.get("uses") == "actions/checkout@v4")
+    script_index = next(index for index, step in enumerate(steps) if step.get("run") == command)
+    assert checkout_index < script_index
+
+
 @pytest.mark.contract
 def test_build_freshness_policy_and_required_context() -> None:
     workflow = load_workflow("build-guidelines.yml")
@@ -68,6 +75,7 @@ def test_nightly_preflight_and_deploy_freshness_policy() -> None:
     assert "git merge-base --is-ancestor" in ancestry["run"]
     pending = next(step for step in validate["steps"] if step.get("name") == "Mark preflight pending")
     assert pending["run"] == "bash scripts/fls_release_status.sh pending"
+    assert_checkout_precedes_script(validate, pending["run"])
     assert preflight["jobs"]["build"]["with"]["enforce_spec_lock"] == "true"
     assert preflight["jobs"]["build"]["needs"] == "validate"
     record = preflight["jobs"]["record"]
@@ -76,12 +84,14 @@ def test_nightly_preflight_and_deploy_freshness_policy() -> None:
     assert record["permissions"] == {"contents": "read", "statuses": "write"}
     record_step = next(step for step in record["steps"] if step.get("name") == "Record preflight result")
     assert record_step["run"] == "bash scripts/fls_release_status.sh preflight-result"
+    assert_checkout_precedes_script(record, record_step["run"])
 
     assert deploy["permissions"] == {}
     authorization = deploy["jobs"]["authorize-release"]
     assert authorization["permissions"] == {"contents": "read", "statuses": "read"}
     authorize_step = next(step for step in authorization["steps"] if step.get("name") == "Authorize release")
     assert authorize_step["run"] == "bash scripts/fls_release_status.sh authorize"
+    assert_checkout_precedes_script(authorization, authorize_step["run"])
     assert authorize_step["env"]["PREFLIGHT_MAX_AGE_SECONDS"] == "86400"
     assert authorize_step["env"]["PREFLIGHT_FUTURE_TOLERANCE_SECONDS"] == "300"
     assert deploy["jobs"]["build"]["needs"] == "authorize-release"
@@ -99,10 +109,12 @@ def test_nightly_preflight_and_deploy_freshness_policy() -> None:
     )
     assert status_index > pages_index
     assert deploy_steps[status_index]["run"] == "bash scripts/fls_release_status.sh deployed"
+    assert_checkout_precedes_script(deploy["jobs"]["deploy"], deploy_steps[status_index]["run"])
 
     release_script = (ROOT / "scripts" / "fls_release_status.sh").read_text(encoding="utf-8")
     assert 'commits/$GITHUB_SHA/status"' in release_script
     assert "--paginate" in release_script
+    assert "--jq '.statuses[] | [.context, .state, .created_at] | @tsv'" in release_script
     assert "statuses?per_page" not in release_script
     assert all(not line.lstrip().startswith("jq ") for line in release_script.splitlines())
 

@@ -34,10 +34,10 @@ uv run --frozen make.py --ignore-spec-lock-diff
 
 ## Release preflight and deploy
 
-Run the `Release Preflight` workflow against the default-branch ref containing
-the commit to be released, and enter that commit's full 40-character SHA in the
-required `release_sha` input. The workflow fails unless the selected ref resolves
-to that exact SHA and the commit is reachable from the default branch. It then
+Run the `Release Preflight` workflow against a branch whose head is the commit to
+be released, and enter that commit's full 40-character SHA in the required
+`release_sha` input. The workflow fails unless the selected branch resolves to
+that exact SHA and the commit is reachable from the default branch. It then
 runs the complete reusable build with live FLS freshness enforcement and records a
 `release-preflight` commit status. It records `success` only when commit
 validation and the complete build pass.
@@ -67,6 +67,13 @@ Release procedure:
 4. Within 24 hours, create the version tag on that exact commit.
 5. Confirm Deploy authorizes the commit, builds offline, publishes Pages, and
    records `deploy/<tag>`.
+
+If the default branch has advanced beyond the intended release commit, create a
+temporary remote branch whose head is exactly that commit and select the
+temporary branch when dispatching `Release Preflight`. The ancestry check still
+requires the commit to be reachable from the default branch. Delete the
+temporary branch after the preflight run completes; do not reset the default
+branch or move a release tag to create this dispatch point.
 
 Do not move a tag to recover a failed release. If the tagged commit can still
 pass preflight, run preflight for that exact commit and rerun Deploy. If it

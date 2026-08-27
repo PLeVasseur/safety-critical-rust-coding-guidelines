@@ -85,11 +85,11 @@ authorize_release() {
   now_epoch=$(date -u +%s)
   local preflight_age=$((now_epoch - preflight_epoch))
   if (( preflight_age < -PREFLIGHT_FUTURE_TOLERANCE_SECONDS )); then
-    echo "::error::Release preflight timestamp exceeds the allowed five-minute future clock skew."
+    echo "::error::Release preflight timestamp exceeds the configured $PREFLIGHT_FUTURE_TOLERANCE_SECONDS-second future clock-skew tolerance."
     return 1
   fi
   if (( preflight_age > PREFLIGHT_MAX_AGE_SECONDS )); then
-    echo "::error::Release preflight status is outside the 24-hour publication window."
+    echo "::error::Release preflight status is outside the configured $PREFLIGHT_MAX_AGE_SECONDS-second publication window."
     return 1
   fi
 
@@ -107,7 +107,10 @@ record_preflight_result() {
     description="Release preflight passed"
   fi
   post_status "$PREFLIGHT_CONTEXT" "$state" "$description"
-  [[ "$state" == "success" ]]
+  if [[ "$state" == "success" ]]; then
+    return 0
+  fi
+  return 1
 }
 
 case "${1:-}" in
