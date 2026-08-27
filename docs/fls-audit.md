@@ -20,8 +20,10 @@ uv run python scripts/fls_audit.py
 
 Normal pull request, merge queue, and push-to-`main` builds run all FLS
 reference and coverage validation, but do not fail solely because the live FLS
-has moved beyond `src/spec.lock`. The scheduled Nightly workflow and tagged
-release/deploy workflow enforce lock freshness and fail while it is stale.
+has moved beyond `src/spec.lock`. The scheduled Nightly workflow and manually
+dispatched Release Preflight enforce lock freshness and fail while it is stale.
+Tagged Deploy builds require exact-commit preflight evidence and build offline
+from the committed lock instead of consulting the live FLS.
 
 Local builds enforce freshness by default. Use `--ignore-spec-lock-diff` only
 when intentionally reproducing the nonblocking CI policy:
@@ -29,6 +31,46 @@ when intentionally reproducing the nonblocking CI policy:
 ```shell
 uv run --frozen make.py --ignore-spec-lock-diff
 ```
+
+## Release preflight and deploy
+
+Run the `Release Preflight` workflow against the exact default-branch commit to
+be released before creating its version tag. The workflow runs the complete
+reusable build with live FLS freshness enforcement and records a
+`release-preflight` commit status. It records `success` only when commit
+validation and the complete build pass.
+
+For a tag's first publication, Deploy requires the latest
+`release-preflight` status on the tagged commit to be successful and no more
+than 24 hours old. Deploy then builds with `--offline`, so the publication uses
+the FLS baseline captured in that commit's `src/spec.lock`. A successful Pages
+publication records a tag-specific `deploy/<tag>` status. A later deployment
+of that same tag and commit may rely on the prior deployment status without
+rechecking the live FLS.
+
+Commit statuses are workflow evidence, not signed attestations. Repository
+administrators and trusted workflows with status-write permission remain
+inside the release trust boundary. Offline Deploy also remains dependent on
+GitHub Actions, locked package availability, and GitHub Pages; it is decoupled
+specifically from mutable live FLS state and is not claimed to be a
+byte-for-byte reproducible build.
+
+Release procedure:
+
+1. Merge all intended release changes and identify the exact commit to tag.
+2. Run `Release Preflight` against that commit.
+3. Confirm the workflow and its `release-preflight` commit status succeeded.
+4. Within 24 hours, create the version tag on that exact commit.
+5. Confirm Deploy authorizes the commit, builds offline, publishes Pages, and
+   records `deploy/<tag>`.
+
+Do not move a tag to recover a failed release. If the tagged commit can still
+pass preflight, run preflight for that exact commit and rerun Deploy. If it
+cannot, reconcile the FLS baseline or other release failure in a new commit and
+create a new version tag. A successful preflight deliberately remains valid
+for first publication when the live FLS moves during the subsequent 24-hour
+window; Nightly and the scheduled audit report that movement for the next
+synchronization cycle.
 
 ## Rolling audit issue
 
@@ -90,6 +132,28 @@ with issue-write permission remain inside the trust boundary.
 The workflow concurrency group is the supported serialization mechanism.
 Concurrent direct invocations of the mutating issue script are unsupported.
 
+## Operational ownership and review
+
+FLS reconciliation is currently a shared maintainer responsibility. A dedicated
+reconciliation crew is expected in the future, but no individual owner or
+response-time commitment is assigned yet. A maintainer manually starting an
+audit or preparing a release is responsible for triaging the resulting failure
+or recording a clear handoff.
+
+The rolling issue is recoverable automation state and an operational review
+surface, not signed safety evidence. The committed `spec.lock`, reviewed
+synchronization PR, and preserved workflow reports provide the evidence used to
+rationalize a baseline update. Damage to old issue state does not independently
+invalidate a fresh lock or block Release Preflight; the live comparison against
+the committed lock remains the release freshness criterion.
+
+Review the reconciler after 90 days of production use. Record the number of
+scheduled and no-op runs, normal transitions, recovered partial writes,
+unresolved ambiguous writes, manual repairs, operator time, actual use of
+transition comments, and payload growth. Retain the complete historical chain
+and fail-closed protocol only if that evidence justifies its continuing
+maintenance cost.
+
 ## Troubleshooting a failed reconciliation
 
 1. Preserve the issue body, raw comments, workflow URL, and the run's JSON,
@@ -120,7 +184,9 @@ assumptions. If the issue changed, stop rather than broadening the recognizer.
 Remove the dedicated adoption code and tests after the first production run has
 adopted or definitively closed `#1236`, the issue has managed state or is clearly
 historical, and a second unchanged run performs zero issue writes. This is not a
-general legacy compatibility mechanism.
+general legacy compatibility mechanism. Remove the recognizer, pre-campaign body
+archival path, legacy close path, dedicated tests, and this section in a separate
+cleanup PR.
 
 ## Outputs
 
