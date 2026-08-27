@@ -31,6 +31,17 @@ post_status() {
     -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
 }
 
+format_duration() {
+  local seconds="$1"
+  if (( seconds > 0 && seconds % 3600 == 0 )); then
+    printf "%ss (%sh)" "$seconds" "$((seconds / 3600))"
+  elif (( seconds > 0 && seconds % 60 == 0 )); then
+    printf "%ss (%sm)" "$seconds" "$((seconds / 60))"
+  else
+    printf "%ss" "$seconds"
+  fi
+}
+
 authorize_release() {
   require_common_environment
   : "${GITHUB_REF_NAME:?GITHUB_REF_NAME is required}"
@@ -85,11 +96,11 @@ authorize_release() {
   now_epoch=$(date -u +%s)
   local preflight_age=$((now_epoch - preflight_epoch))
   if (( preflight_age < -PREFLIGHT_FUTURE_TOLERANCE_SECONDS )); then
-    echo "::error::Release preflight timestamp exceeds the configured $PREFLIGHT_FUTURE_TOLERANCE_SECONDS-second future clock-skew tolerance."
+    echo "::error::Release preflight timestamp exceeds the configured $(format_duration "$PREFLIGHT_FUTURE_TOLERANCE_SECONDS") future clock-skew tolerance."
     return 1
   fi
   if (( preflight_age > PREFLIGHT_MAX_AGE_SECONDS )); then
-    echo "::error::Release preflight status is outside the configured $PREFLIGHT_MAX_AGE_SECONDS-second publication window."
+    echo "::error::Release preflight status is outside the configured $(format_duration "$PREFLIGHT_MAX_AGE_SECONDS") publication window."
     return 1
   fi
 

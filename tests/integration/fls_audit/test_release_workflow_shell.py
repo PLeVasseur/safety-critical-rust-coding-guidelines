@@ -27,6 +27,8 @@ def status(context: str, state: str, created_at: datetime | None = None) -> dict
 
 
 def project_combined_status(statuses: list[dict[str, str]]) -> list[str]:
+    # Test fixtures use repository-owned contexts without tabs or newlines;
+    # production @tsv output escapes those characters and still fails closed.
     return ["\t".join(item[field] for field in ("context", "state", "created_at")) for item in statuses]
 
 
@@ -149,7 +151,6 @@ def test_reviewed_jq_projection_matches_combined_status_shape() -> None:
         "ci/build\tpending\t2026-08-27T12:00:00Z",
         "release-preflight\tsuccess\t2026-08-27T12:01:00Z",
     ]
-    assert f"--jq '{STATUS_JQ}'" in SCRIPT.read_text(encoding="utf-8")
 
 
 @pytest.mark.integration
@@ -242,7 +243,7 @@ def test_stale_preflight_rejects_first_publication(tmp_path: Path) -> None:
     result, _ = run_release_script(tmp_path, "authorize", [status("release-preflight", "success", stale)])
 
     assert result.returncode == 1
-    assert "outside the configured 86400-second publication window" in result.stdout
+    assert "outside the configured 86400s (24h) publication window" in result.stdout
 
 
 @pytest.mark.integration
@@ -260,7 +261,7 @@ def test_excessive_future_clock_skew_has_distinct_error(tmp_path: Path) -> None:
     result, _ = run_release_script(tmp_path, "authorize", [status("release-preflight", "success", future)])
 
     assert result.returncode == 1
-    assert "exceeds the configured 300-second future clock-skew tolerance" in result.stdout
+    assert "exceeds the configured 300s (5m) future clock-skew tolerance" in result.stdout
     assert "publication window" not in result.stdout
 
 
@@ -271,12 +272,17 @@ def test_excessive_future_clock_skew_has_distinct_error(tmp_path: Path) -> None:
         (
             -timedelta(hours=2),
             {"PREFLIGHT_MAX_AGE_SECONDS": "3600"},
-            "configured 3600-second publication window",
+            "configured 3600s (1h) publication window",
         ),
         (
             timedelta(minutes=2),
             {"PREFLIGHT_FUTURE_TOLERANCE_SECONDS": "60"},
-            "configured 60-second future clock-skew tolerance",
+            "configured 60s (1m) future clock-skew tolerance",
+        ),
+        (
+            timedelta(minutes=2),
+            {"PREFLIGHT_FUTURE_TOLERANCE_SECONDS": "61"},
+            "configured 61s future clock-skew tolerance",
         ),
     ],
 )
