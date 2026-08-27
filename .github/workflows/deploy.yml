@@ -5,11 +5,69 @@ on:
     tags:
       - "*.*.*"
 
+permissions: {}
+
 jobs:
+  authorize-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: read
+    steps:
+      - name: Authorize release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PREFLIGHT_MAX_AGE_SECONDS: "86400"
+        run: |
+          deploy_context="deploy/$GITHUB_REF_NAME"
+          if (( ${#deploy_context} > 100 )); then
+            echo "::error::Deployment status context exceeds GitHub's 100-character limit."
+            exit 1
+          fi
+
+          statuses=$(gh api --method GET \
+            "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/statuses?per_page=100")
+          deploy_state=$(jq -r --arg context "$deploy_context" \
+            '[.[] | select(.context == $context)][0].state // ""' <<<"$statuses")
+          if [[ "$deploy_state" == "success" ]]; then
+            echo "Prior successful deployment authorizes $GITHUB_REF_NAME at $GITHUB_SHA."
+            exit 0
+          fi
+
+          preflight=$(jq -c \
+            '[.[] | select(.context == "release-preflight")][0] // empty' <<<"$statuses")
+          if [[ -z "$preflight" ]]; then
+            echo "::error::No release preflight status exists for $GITHUB_SHA."
+            exit 1
+          fi
+
+          preflight_state=$(jq -r '.state' <<<"$preflight")
+          if [[ "$preflight_state" != "success" ]]; then
+            echo "::error::Latest release preflight status is $preflight_state, not success."
+            exit 1
+          fi
+
+          preflight_created=$(jq -r '.created_at' <<<"$preflight")
+          if ! preflight_epoch=$(date -u -d "$preflight_created" +%s); then
+            echo "::error::Release preflight status has an invalid timestamp: $preflight_created"
+            exit 1
+          fi
+          now_epoch=$(date -u +%s)
+          preflight_age=$((now_epoch - preflight_epoch))
+          if (( preflight_age < 0 || preflight_age > PREFLIGHT_MAX_AGE_SECONDS )); then
+            echo "::error::Release preflight status is outside the 24-hour publication window."
+            exit 1
+          fi
+
+          echo "Recent release preflight authorizes $GITHUB_REF_NAME at $GITHUB_SHA."
+
   build:
+    needs: authorize-release
+    permissions:
+      contents: read
     uses: ./.github/workflows/build-guidelines.yml
     with:
-      enforce_spec_lock: true
+      offline: true
 
   deploy:
     needs: build
@@ -17,6 +75,10 @@ jobs:
     # rather than being skipped. Skipped jobs don't block merge queue.
     if: always()
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+      statuses: write
     steps:
       - name: Fail if build failed
         if: needs.build.result != 'success'
@@ -46,3 +108,14 @@ jobs:
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./build/html
+
+      - name: Record successful deployment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          deploy_context="deploy/$GITHUB_REF_NAME"
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+            -f state=success \
+            -f context="$deploy_context" \
+            -f description="Tag $GITHUB_REF_NAME deployed successfully" \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"

@@ -20,6 +20,7 @@ def run_build_script(
     tmp_path: Path,
     *,
     enforce: bool,
+    offline: bool = False,
     uv_exit: int = 0,
     uv_output: str = "build complete",
 ) -> tuple[subprocess.CompletedProcess[str], str]:
@@ -39,6 +40,7 @@ exit "$UV_EXIT"
     env = {
         **os.environ,
         "ENFORCE_SPEC_LOCK": "true" if enforce else "false",
+        "OFFLINE_BUILD": "true" if offline else "false",
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
         "UV_ARGS_FILE": str(args_file),
         "UV_EXIT": str(uv_exit),
@@ -52,7 +54,8 @@ exit "$UV_EXIT"
         capture_output=True,
         text=True,
     )
-    return result, args_file.read_text(encoding="utf-8")
+    args = args_file.read_text(encoding="utf-8") if args_file.exists() else ""
+    return result, args
 
 
 def run_prerequisite_script(check_result: str, audit_result: str) -> subprocess.CompletedProcess[str]:
@@ -68,12 +71,30 @@ def run_prerequisite_script(check_result: str, audit_result: str) -> subprocess.
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize(("enforce", "ignored"), [(False, True), (True, False)])
-def test_build_shell_selects_freshness_policy(tmp_path: Path, enforce: bool, ignored: bool) -> None:
-    result, args = run_build_script(tmp_path, enforce=enforce)
+@pytest.mark.parametrize(
+    ("enforce", "offline", "ignored"),
+    [(False, False, True), (True, False, False), (False, True, False)],
+)
+def test_build_shell_selects_freshness_policy(
+    tmp_path: Path,
+    enforce: bool,
+    offline: bool,
+    ignored: bool,
+) -> None:
+    result, args = run_build_script(tmp_path, enforce=enforce, offline=offline)
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert ("--ignore-spec-lock-diff" in args) is ignored
+    assert ("--offline" in args) is offline
+
+
+@pytest.mark.integration
+def test_build_shell_rejects_enforced_offline_mode(tmp_path: Path) -> None:
+    result, args = run_build_script(tmp_path, enforce=True, offline=True)
+
+    assert result.returncode == 1
+    assert "cannot enforce live FLS freshness in offline mode" in result.stdout
+    assert args == ""
 
 
 @pytest.mark.integration

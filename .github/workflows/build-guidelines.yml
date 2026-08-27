@@ -15,6 +15,10 @@ on:
         description: Fail when the live FLS differs from src/spec.lock
         type: boolean
         default: false
+      offline:
+        description: Build from src/spec.lock without retrieving the live FLS
+        type: boolean
+        default: false
 
 jobs:
   # Check Rust examples compile before building docs
@@ -64,10 +68,16 @@ jobs:
         shell: bash
         env:
           ENFORCE_SPEC_LOCK: ${{ inputs.enforce_spec_lock || false }}
+          OFFLINE_BUILD: ${{ inputs.offline || false }}
         run: |
           mkdir -p build
           build_args=()
-          if [[ "$ENFORCE_SPEC_LOCK" != "true" ]]; then
+          if [[ "$ENFORCE_SPEC_LOCK" == "true" && "$OFFLINE_BUILD" == "true" ]]; then
+            echo "::error::The documentation build cannot enforce live FLS freshness in offline mode."
+            exit 1
+          elif [[ "$OFFLINE_BUILD" == "true" ]]; then
+            build_args+=(--offline)
+          elif [[ "$ENFORCE_SPEC_LOCK" != "true" ]]; then
             build_args+=(--ignore-spec-lock-diff)
           fi
 

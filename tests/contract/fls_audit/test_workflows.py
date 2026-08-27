@@ -22,6 +22,9 @@ def test_build_freshness_policy_and_required_context() -> None:
     enforce = workflow["on"]["workflow_call"]["inputs"]["enforce_spec_lock"]
     assert enforce["type"] == "boolean"
     assert enforce["default"] == "false"
+    offline = workflow["on"]["workflow_call"]["inputs"]["offline"]
+    assert offline["type"] == "boolean"
+    assert offline["default"] == "false"
     test_job = workflow["jobs"]["fls_audit_tests"]
     test_step = next(step for step in test_job["steps"] if step.get("name") == "Run FLS audit tests")
     assert "uv run --frozen pytest" in test_step["run"]
@@ -38,19 +41,59 @@ def test_build_freshness_policy_and_required_context() -> None:
     assert all(step.get("name") != "Run FLS audit tests" for step in build["steps"])
     build_step = next(step for step in build["steps"] if step.get("name") == "Build documentation")
     assert "inputs.enforce_spec_lock" in build_step["env"]["ENFORCE_SPEC_LOCK"]
+    assert "inputs.offline" in build_step["env"]["OFFLINE_BUILD"]
     assert build_step["shell"] == "bash"
+    assert "--offline" in build_step["run"]
     assert "--ignore-spec-lock-diff" in build_step["run"]
     assert "PIPESTATUS[0]" in build_step["run"]
 
 
 @pytest.mark.contract
-def test_nightly_and_deploy_enforce_freshness() -> None:
+def test_nightly_preflight_and_deploy_freshness_policy() -> None:
     nightly = load_workflow("nightly.yml")
+    preflight = load_workflow("release-preflight.yml")
     deploy = load_workflow("deploy.yml")
 
     assert nightly["jobs"]["run-build"]["with"]["enforce_spec_lock"] == "true"
-    assert deploy["jobs"]["build"]["with"]["enforce_spec_lock"] == "true"
+    assert set(preflight["on"]) == {"workflow_dispatch"}
+    assert preflight["permissions"] == {}
+    validate = preflight["jobs"]["validate"]
+    assert validate["permissions"] == {"contents": "read", "statuses": "write"}
+    ancestry = next(step for step in validate["steps"] if step.get("name") == "Require commit from default branch")
+    assert "git merge-base --is-ancestor" in ancestry["run"]
+    pending = next(step for step in validate["steps"] if step.get("name") == "Mark preflight pending")
+    assert "state=pending" in pending["run"]
+    assert "context=release-preflight" in pending["run"]
+    assert preflight["jobs"]["build"]["with"]["enforce_spec_lock"] == "true"
+    assert preflight["jobs"]["build"]["needs"] == "validate"
+    record = preflight["jobs"]["record"]
+    assert record["if"] == "always()"
+    assert set(record["needs"]) == {"validate", "build"}
+    assert record["permissions"] == {"contents": "read", "statuses": "write"}
+    assert "release-preflight" in record["steps"][0]["run"]
+
+    assert deploy["permissions"] == {}
+    authorization = deploy["jobs"]["authorize-release"]
+    assert authorization["permissions"] == {"contents": "read", "statuses": "read"}
+    authorize_script = authorization["steps"][0]["run"]
+    assert "release-preflight" in authorize_script
+    assert authorization["steps"][0]["env"]["PREFLIGHT_MAX_AGE_SECONDS"] == "86400"
+    assert 'deploy/$GITHUB_REF_NAME' in authorize_script
+    assert deploy["jobs"]["build"]["needs"] == "authorize-release"
+    assert deploy["jobs"]["build"]["with"]["offline"] == "true"
     assert deploy["jobs"]["deploy"]["needs"] == "build"
+    assert deploy["jobs"]["deploy"]["permissions"] == {
+        "actions": "read",
+        "contents": "write",
+        "statuses": "write",
+    }
+    deploy_steps = deploy["jobs"]["deploy"]["steps"]
+    pages_index = next(index for index, step in enumerate(deploy_steps) if step.get("name") == "Deploy to GitHub Pages")
+    status_index = next(
+        index for index, step in enumerate(deploy_steps) if step.get("name") == "Record successful deployment"
+    )
+    assert status_index > pages_index
+    assert 'deploy/$GITHUB_REF_NAME' in deploy_steps[status_index]["run"]
 
 
 @pytest.mark.contract
