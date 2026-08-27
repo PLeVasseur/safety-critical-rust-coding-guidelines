@@ -55,6 +55,9 @@ def test_body_digest_ignores_volatile_metadata_but_tracks_impact() -> None:
     assert state.report_body_digest(first, markdown) != state.report_body_digest(second, other_markdown)
     assert state.report_body_digest(first, markdown) != state.report_body_digest(first, f"{markdown}Changed\n")
 
+    second["metadata"] = []
+    assert state.report_commit(second, "current_commit") == ""
+
 
 def test_state_marker_matches_golden() -> None:
     report = report_with_changes()
@@ -90,6 +93,148 @@ def test_state_requires_consistent_schema_and_managed_region() -> None:
     reversed_region = f"{state.MANAGED_END}\n{state.state_marker(issue_state)}\n{state.MANAGED_START}"
     with pytest.raises(AuditIssueError, match="boundaries are reversed"):
         state.parse_state(reversed_region)
+
+
+def test_canonical_items_rejects_malformed_report_shapes() -> None:
+    cases: list[tuple[dict, str]] = []
+
+    report = report_with_changes()
+    report["changes"] = []
+    cases.append((report, "changes must be an object"))
+
+    report = report_with_changes()
+    report["changes"]["added"] = {}
+    cases.append((report, "changes.added must be a list"))
+
+    report = report_with_changes()
+    report["changes"]["removed"] = [None]
+    cases.append((report, "changes.removed contains an invalid entry"))
+
+    report = report_with_changes()
+    report["changes"]["removed"] = [copy.deepcopy(report["changes"]["added"][0])]
+    cases.append((report, "duplicate paragraph fls_added"))
+
+    report = report_with_changes()
+    report["header_changes"] = {}
+    cases.append((report, "header_changes must be a list"))
+
+    report = report_with_changes()
+    report["header_changes"] = [None]
+    cases.append((report, "header_changes contains an invalid entry"))
+
+    report = report_with_changes()
+    report["header_changes"] = [{}]
+    cases.append((report, "header_changes entry has no section identity"))
+
+    report = report_with_changes()
+    structural = {"section_id": "fls_duplicate"}
+    report["header_changes"] = [structural, copy.deepcopy(structural)]
+    cases.append((report, "duplicate item header:fls_duplicate"))
+
+    for invalid_report, message in cases:
+        with pytest.raises(AuditIssueError, match=message):
+            state.canonical_items(invalid_report)
+
+
+def test_applied_state_validation_guards() -> None:
+    report = report_with_changes()
+    applied = state.make_applied(report, "# Report\n", state.canonical_items(report))
+    cases: list[tuple[object, str]] = [
+        (None, "invalid schema"),
+        ({**applied, "extra": True}, "invalid schema"),
+        ({**applied, "items": []}, "no item map"),
+        ({**applied, "items": {"paragraph:x": "invalid"}}, "no item map"),
+        ({**applied, "semantic_digest": "invalid"}, "invalid digests"),
+        ({**applied, "body_digest": "invalid"}, "invalid digests"),
+        ({**applied, "current_commit": "not-a-commit"}, "invalid current commit"),
+    ]
+
+    for invalid, message in cases:
+        with pytest.raises(AuditIssueError, match=message):
+            state.validate_applied(invalid)
+
+
+def test_issue_state_validation_guards() -> None:
+    report = report_with_changes()
+    applied = state.make_applied(report, "# Report\n", state.canonical_items(report))
+    issue_state = state.make_state(state.campaign_id(spec_lock()), 0, applied)
+    cases: list[tuple[object, str]] = [
+        (None, "Unsupported or malformed"),
+        ({**issue_state, "version": 2}, "Unsupported or malformed"),
+        ({**issue_state, "campaign": "invalid"}, "invalid campaign or sequence"),
+        ({**issue_state, "sequence": -1}, "invalid campaign or sequence"),
+        ({**issue_state, "origin_semantic_digest": "invalid"}, "invalid origin semantic digest"),
+        ({**issue_state, "applied": None}, "applied state has an invalid schema"),
+    ]
+
+    for invalid, message in cases:
+        with pytest.raises(AuditIssueError, match=message):
+            state.validate_state(invalid)
+
+
+def test_state_marker_parsing_guards() -> None:
+    report = report_with_changes()
+    applied = state.make_applied(report, "# Report\n", state.canonical_items(report))
+    issue_state = state.make_state(state.campaign_id(spec_lock()), 0, applied)
+    marker = state.state_marker(issue_state)
+    managed = f"{state.MANAGED_START}\n{marker}\n{state.MANAGED_END}"
+
+    assert state.parse_state(managed) == issue_state
+    assert state.parse_state("ordinary issue body") is None
+
+    with pytest.raises(AuditIssueError, match="unsupported state marker"):
+        state.parse_state("<!-- fls-audit:state:v2\n{}\n-->")
+    with pytest.raises(AuditIssueError, match="managed region has no state marker"):
+        state.parse_state(f"{state.MANAGED_START}\nNo marker\n{state.MANAGED_END}")
+    with pytest.raises(AuditIssueError, match="missing or ambiguous"):
+        state.parse_state(f"{state.MANAGED_START}\n{state.MANAGED_START}\n{state.MANAGED_END}")
+    with pytest.raises(AuditIssueError, match="multiple state markers"):
+        state.parse_state(f"{state.MANAGED_START}\n{marker}\n{marker}\n{state.MANAGED_END}")
+    with pytest.raises(AuditIssueError, match="not valid JSON"):
+        state.parse_state(f"{state.MANAGED_START}\n<!-- fls-audit:state:v1\n{{bad}}\n-->\n{state.MANAGED_END}")
+
+
+def test_batch_marker_validation_guards() -> None:
+    report = report_with_changes()
+    applied = state.make_applied(report, "# Report\n", state.canonical_items(report))
+    campaign = state.campaign_id(spec_lock())
+    digest = state.batch_id(campaign, 1, applied["semantic_digest"], applied["semantic_digest"])
+
+    with pytest.raises(AuditIssueError, match="no previous semantic digest"):
+        state.batch_marker(campaign, 1, digest, applied)
+
+    valid = state.batch_marker(campaign, 1, digest, applied, applied["semantic_digest"])
+    assert state.parse_batch_marker(valid) is not None
+    assert state.parse_batch_marker("ordinary comment") is None
+
+    with pytest.raises(AuditIssueError, match="unsupported batch marker"):
+        state.parse_batch_marker("<!-- fls-audit:batch:v2\n{}\n-->")
+    with pytest.raises(AuditIssueError, match="multiple batch markers"):
+        state.parse_batch_marker(f"{valid}\n{valid}")
+    with pytest.raises(AuditIssueError, match="not valid JSON"):
+        state.parse_batch_marker("<!-- fls-audit:batch:v1\n{bad}\n-->")
+
+    base = {"batch_id": digest, "campaign": campaign, "sequence": 1}
+    cases: list[tuple[object, str]] = [
+        ({"batch_id": digest}, "invalid schema"),
+        ({**base, "extra": True}, "invalid schema"),
+        ({**base, "batch_id": "invalid"}, "invalid batch ID"),
+        ({**base, "campaign": ""}, "invalid campaign"),
+        ({**base, "sequence": True}, "invalid sequence"),
+        ({**base, "applied": applied}, "invalid schema"),
+        (
+            {**base, "applied": applied, "previous_semantic_digest": "invalid"},
+            "invalid previous semantic digest",
+        ),
+        (
+            {**base, "applied": None, "previous_semantic_digest": applied["semantic_digest"]},
+            "applied state has an invalid schema",
+        ),
+    ]
+    for marker_value, message in cases:
+        body = f"<!-- fls-audit:batch:v1\n{state.compact_json(marker_value)}\n-->"
+        with pytest.raises(AuditIssueError, match=message):
+            state.parse_batch_marker(body)
 
 
 def test_comment_recovery_rejects_sequence_gap() -> None:
