@@ -11,68 +11,98 @@ from tests.fls_audit_fixtures import report_with_changes, spec_lock
 from tests.integration.fls_audit.fake_github import FakeGitHubClient, current_issue
 
 
-def reconcile(client: FakeGitHubClient, report: dict) -> str:
-    return reconciliation.reconcile(client, report, "# Report\n", spec_lock(), "fls-audit", "FLS audit:")
+def reconcile(
+    client: FakeGitHubClient,
+    report: dict,
+    *,
+    limits: state_model.BodyLimits = state_model.DEFAULT_BODY_LIMITS,
+) -> str:
+    return reconciliation.reconcile(
+        client,
+        report,
+        "# Report\n",
+        spec_lock(),
+        "fls-audit",
+        "FLS audit:",
+        limits=limits,
+    )
 
 
 @pytest.mark.integration
-def test_transition_body_overflow_fails_before_comment(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_transition_body_overflow_fails_before_comment() -> None:
     client = FakeGitHubClient()
     reconcile(client, report_with_changes())
     number = next(iter(client.issue_values))
     current_size = len(client.issue_values[number]["body"].encode("utf-8"))
-    monkeypatch.setattr(state_model, "MAX_ISSUE_BODY_BYTES", current_size + 100)
+    limits = state_model.BodyLimits(issue_body_bytes=current_size + 100)
     client.mutations.clear()
 
     with pytest.raises(AuditIssueError, match="Compact issue body"):
-        reconcile(client, report_with_changes(live_checksum="x" * 1_000))
+        reconcile(client, report_with_changes(live_checksum="x" * 1_000), limits=limits)
 
     assert client.mutations == []
     assert client.comment_values.get(number, []) == []
 
 
 @pytest.mark.integration
-def test_create_failure_before_write_is_safe_to_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("invalid_lock", [{}, {"documents": []}, {"documents": {}}])
+def test_invalid_spec_lock_fails_before_client_mutation(invalid_lock: dict) -> None:
+    client = FakeGitHubClient()
+    client.label_exists = False
+
+    with pytest.raises(AuditIssueError, match="documents must be a nonempty list"):
+        reconciliation.reconcile(
+            client,
+            report_with_changes(),
+            "# Report\n",
+            invalid_lock,
+            "fls-audit",
+            "FLS audit:",
+        )
+
+    assert client.mutations == []
+
+
+@pytest.mark.integration
+def test_create_failure_before_write_is_safe_to_retry() -> None:
     client = FakeGitHubClient()
     client.fail("create", "before")
-    monkeypatch.setattr(reconciliation.time, "sleep", lambda _delay: None)
 
     with pytest.raises(AuditIssueError, match="create failed before write"):
         reconcile(client, report_with_changes())
 
     assert client.issue_values == {}
+    assert client.sleep_delays == [1, 2, 4, 8]
     reconcile(client, report_with_changes())
     assert len(client.issue_values) == 1
 
 
 @pytest.mark.integration
-def test_create_failure_after_write_recovers_created_issue(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_create_failure_after_write_recovers_created_issue() -> None:
     client = FakeGitHubClient()
     client.fail("create", "after")
     client.stale_after_write["create"] = 2
     client.read_failures_after_write["create"] = 1
-    monkeypatch.setattr(reconciliation.time, "sleep", lambda _delay: None)
 
     reconcile(client, report_with_changes())
 
     assert len(client.issue_values) == 1
     assert [mutation[0] for mutation in client.mutations].count("create") == 1
+    assert client.sleep_delays == [1, 2, 4]
 
 
 @pytest.mark.integration
-def test_comment_failure_before_write_is_safe_to_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_comment_failure_before_write_is_safe_to_retry() -> None:
     client = FakeGitHubClient()
     reconcile(client, report_with_changes())
     number, _, initial = current_issue(client)
     client.fail("comment", "before")
-    monkeypatch.setattr(reconciliation.time, "sleep", lambda _delay: None)
 
     with pytest.raises(AuditIssueError, match="comment failed before write"):
         reconcile(client, report_with_changes(live_checksum="live-b"))
 
     assert client.comment_values.get(number, []) == []
+    assert client.sleep_delays == [1, 2, 4, 8]
     _, _, stale = current_issue(client)
     assert stale["sequence"] == initial["sequence"]
 
@@ -81,18 +111,18 @@ def test_comment_failure_before_write_is_safe_to_retry(monkeypatch: pytest.Monke
 
 
 @pytest.mark.integration
-def test_ambiguous_comment_polls_through_stale_reads(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ambiguous_comment_polls_through_stale_reads() -> None:
     client = FakeGitHubClient()
     reconcile(client, report_with_changes())
     number, _, _ = current_issue(client)
     client.fail("comment", "after")
     client.stale_after_write["comment"] = 2
     client.read_failures_after_write["comment"] = 1
-    monkeypatch.setattr(reconciliation.time, "sleep", lambda _delay: None)
 
     reconcile(client, report_with_changes(live_checksum="live-b"))
 
     assert len(client.comment_values[number]) == 1
+    assert client.sleep_delays == [1, 2, 4]
 
 
 @pytest.mark.integration
@@ -323,16 +353,16 @@ def test_duplicate_bot_batch_marker_fails_without_mutation() -> None:
 
 
 @pytest.mark.integration
-def test_runtime_verification_detects_deleted_transition_comment(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_runtime_verification_detects_deleted_transition_comment() -> None:
     client = FakeGitHubClient()
     reconcile(client, report_with_changes())
     reconcile(client, report_with_changes(live_checksum="live-b"))
     number, _, _ = current_issue(client)
     client.comment_values[number] = []
-    monkeypatch.setattr(reconciliation.time, "sleep", lambda _delay: None)
-
     with pytest.raises(AuditIssueError, match="comment history does not match"):
         reconcile(client, report_with_changes(live_checksum="live-b"))
+
+    assert client.sleep_delays == [1, 2]
 
 
 @pytest.mark.integration

@@ -1,12 +1,17 @@
 import hashlib
 import json
 import re
-from typing import Any
+from typing import Any, NamedTuple
 
 from .errors import AuditIssueError
 
-MAX_ISSUE_BODY_BYTES = 60_000
-MAX_COMMENT_BODY_BYTES = 60_000
+
+class BodyLimits(NamedTuple):
+    issue_body_bytes: int = 60_000
+    comment_body_bytes: int = 60_000
+
+
+DEFAULT_BODY_LIMITS = BodyLimits()
 
 MANAGED_START = "<!-- fls-audit:managed:start -->"
 MANAGED_END = "<!-- fls-audit:managed:end -->"
@@ -43,8 +48,8 @@ def check_size(value: str, limit: int, description: str) -> None:
 
 def campaign_id(spec_lock: dict[str, Any]) -> str:
     documents = spec_lock.get("documents")
-    if not isinstance(documents, (dict, list)):
-        raise AuditIssueError("spec.lock does not contain documents")
+    if not isinstance(documents, list) or not documents:
+        raise AuditIssueError("spec.lock documents must be a nonempty list")
     return sha256_json(documents)
 
 
@@ -206,8 +211,8 @@ def managed_span(body: str) -> tuple[int, int] | None:
     return start, end + len(MANAGED_END)
 
 
-def parse_state(body: str) -> dict[str, Any] | None:
-    check_size(body, MAX_ISSUE_BODY_BYTES, "Existing issue body")
+def parse_state(body: str, limits: BodyLimits = DEFAULT_BODY_LIMITS) -> dict[str, Any] | None:
+    check_size(body, limits.issue_body_bytes, "Existing issue body")
     matches = list(STATE_RE.finditer(body))
     if not matches:
         if "fls-audit:state:" in body:
@@ -262,8 +267,8 @@ def batch_marker(
     return f"<!-- fls-audit:batch:v1\n{compact_json(marker)}\n-->"
 
 
-def parse_batch_marker(body: str) -> dict[str, Any] | None:
-    check_size(body, MAX_COMMENT_BODY_BYTES, "Existing audit comment")
+def parse_batch_marker(body: str, limits: BodyLimits = DEFAULT_BODY_LIMITS) -> dict[str, Any] | None:
+    check_size(body, limits.comment_body_bytes, "Existing audit comment")
     matches = list(BATCH_RE.finditer(body))
     if not matches:
         if "fls-audit:batch:" in body:

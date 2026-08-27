@@ -4,7 +4,11 @@ import pytest
 
 from scripts.fls_audit_issue_lib import reconcile as reconciliation
 from scripts.fls_audit_issue_lib import state as state_model
-from tests.fls_audit_fixtures import report_with_changes, spec_lock
+from tests.fls_audit_fixtures import (
+    report_with_changes,
+    report_with_structural_changes,
+    spec_lock,
+)
 from tests.integration.fls_audit.fake_github import (
     BOT_USER,
     FakeGitHubClient,
@@ -45,6 +49,21 @@ def test_changed_run_posts_one_comment_and_updates_state() -> None:
     state = state_model.parse_state(client.issue_values[number]["body"])
     assert state is not None
     assert state["sequence"] == 1
+
+
+@pytest.mark.integration
+def test_structural_drift_flows_through_state_and_transition_rendering() -> None:
+    client = FakeGitHubClient()
+    reconcile(client, report_with_changes())
+    client.mutations.clear()
+
+    reconcile(client, report_with_structural_changes())
+
+    number, _, state = current_issue(client)
+    assert {"header:fls_section", "reorder:fls_reordered"} <= state["applied"]["items"].keys()
+    comment = client.comment_values[number][0]["body"]
+    assert "`header:fls_section`: header" in comment
+    assert "`reorder:fls_reordered`: reorder" in comment
 
 
 @pytest.mark.integration
@@ -126,32 +145,30 @@ def test_human_text_added_during_transition_is_preserved() -> None:
 
 
 @pytest.mark.integration
-def test_runtime_verification_retries_stale_issue_read(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_runtime_verification_retries_stale_issue_read() -> None:
     client = FakeGitHubClient()
     reconcile(client, report_with_changes())
     client.stale_after_write["body_patch"] = 1
-    monkeypatch.setattr(reconciliation.time, "sleep", lambda _delay: None)
 
     reconcile(client, report_with_changes(live_checksum="live-b"))
 
     _, _, state = current_issue(client)
     assert state["sequence"] == 1
+    assert client.sleep_delays == [1]
 
 
 @pytest.mark.integration
-def test_runtime_verification_retries_issue_and_comment_staleness_independently(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_runtime_verification_retries_issue_and_comment_staleness_independently() -> None:
     client = FakeGitHubClient()
     reconcile(client, report_with_changes())
     client.stale_after_write["body_patch"] = 1
     client.stale_after_write["comment"] = 2
-    monkeypatch.setattr(reconciliation.time, "sleep", lambda _delay: None)
 
     reconcile(client, report_with_changes(live_checksum="live-b"))
 
     _, _, state = current_issue(client)
     assert state["sequence"] == 1
+    assert client.sleep_delays == [1, 1, 2]
 
 
 @pytest.mark.integration

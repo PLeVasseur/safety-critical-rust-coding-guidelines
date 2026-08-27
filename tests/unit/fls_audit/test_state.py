@@ -1,11 +1,17 @@
 import copy
-import hashlib
+from pathlib import Path
 
 import pytest
 
 from scripts.fls_audit_issue_lib import reconcile, state
 from scripts.fls_audit_issue_lib.errors import AuditIssueError
 from tests.fls_audit_fixtures import report_with_changes, spec_lock
+
+GOLDEN_DIR = Path(__file__).resolve().parents[2] / "fixtures" / "fls_audit" / "golden"
+
+
+def golden(name: str) -> str:
+    return (GOLDEN_DIR / name).read_text(encoding="utf-8").removesuffix("\n")
 
 
 def test_campaign_ignores_metadata_and_json_formatting() -> None:
@@ -50,14 +56,12 @@ def test_body_digest_ignores_volatile_metadata_but_tracks_impact() -> None:
     assert state.report_body_digest(first, markdown) != state.report_body_digest(first, f"{markdown}Changed\n")
 
 
-def test_state_marker_characterization() -> None:
+def test_state_marker_matches_golden() -> None:
     report = report_with_changes()
     applied = state.make_applied(report, "# Current report\n", state.canonical_items(report))
     issue_state = state.make_state(state.campaign_id(spec_lock()), 0, applied)
 
-    assert hashlib.sha256(state.state_marker(issue_state).encode()).hexdigest() == (
-        "33fc5cbda9fd109c9c8330b0b15afe26fc7a08348d4e83d997bfba0d8a85a1dd"
-    )
+    assert state.state_marker(issue_state) == golden("state-marker.md")
 
 
 def test_state_requires_consistent_schema_and_managed_region() -> None:

@@ -1,4 +1,5 @@
 import json
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -48,6 +49,30 @@ def test_disabled_enforcement_still_computes_freshness(
     monkeypatch.setattr(fls_checks.fls_diff, "build_summary", lambda _affected, _changed: ["change"])
 
     assert fls_checks.check_fls_lock_consistency(app(tmp_path), object(), {"live": {}}) == (True, ["change"])
+
+
+def test_detailed_report_write_failure_is_a_warning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    (tmp_path / "spec.lock").write_text(json.dumps({"documents": [{"sections": []}]}), encoding="utf-8")
+    monkeypatch.setattr(fls_checks, "SphinxNeedsData", lambda _env: SimpleNamespace(get_needs_view=lambda: {}))
+    monkeypatch.setattr(fls_checks, "get_tqdm", lambda *, iterable, **_kwargs: iterable)
+    monkeypatch.setattr(fls_checks.fls_diff, "extract_paragraphs", lambda value: value)
+    monkeypatch.setattr(fls_checks.fls_diff, "diff_paragraphs", lambda _live, _locked: {"changed": True})
+    monkeypatch.setattr(fls_checks.fls_diff, "has_differences", lambda _diff: True)
+    monkeypatch.setattr(fls_checks.fls_diff, "build_detailed_differences", lambda _diff, _guidelines: (["change"], []))
+
+    def fail_to_write(_details: list[str]) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(fls_checks.fls_diff, "write_detailed_report", fail_to_write)
+    monkeypatch.setattr(fls_checks.fls_diff, "build_summary", lambda _affected, _changed: ["change"])
+    caplog.set_level(logging.WARNING, logger="sphinx")
+
+    assert fls_checks.check_fls_lock_consistency(app(tmp_path), object(), {"live": {}}) == (True, ["change"])
+    assert "Failed to write detailed differences to temp file: disk full" in caplog.text
 
 
 def test_check_fls_ignores_only_detected_drift(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

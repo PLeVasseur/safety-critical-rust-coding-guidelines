@@ -1,7 +1,7 @@
 import time
 from collections.abc import Callable
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import requests
 
@@ -83,7 +83,22 @@ class GitHubClient:
         )
 
     def url(self, endpoint: str) -> str:
-        return endpoint if endpoint.startswith("https://") else f"https://api.github.com/repos/{self.owner}/{self.repo}/{endpoint}"
+        parsed = urlsplit(endpoint)
+        if not parsed.scheme and not parsed.netloc:
+            return f"https://api.github.com/repos/{self.owner}/{self.repo}/{endpoint}"
+        try:
+            port = parsed.port
+        except ValueError as error:
+            raise AuditIssueError(f"GitHub API URL has an invalid port: {endpoint}") from error
+        if (
+            parsed.scheme != "https"
+            or parsed.hostname != "api.github.com"
+            or port not in (None, 443)
+            or parsed.username is not None
+            or parsed.password is not None
+        ):
+            raise AuditIssueError(f"Refusing GitHub API URL outside https://api.github.com: {endpoint}")
+        return endpoint
 
     def request(
         self,

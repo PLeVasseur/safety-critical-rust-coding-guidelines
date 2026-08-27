@@ -65,6 +65,26 @@ def test_paginate_follows_link_header() -> None:
     assert session.requests[1][2]["params"] is None
 
 
+@pytest.mark.parametrize(
+    "next_url",
+    [
+        "http://api.github.com/repositories/1/issues?page=2",
+        "https://example.test/repositories/1/issues?page=2",
+        "https://api.github.com.example.test/repositories/1/issues?page=2",
+        "https://api.github.com@example.test/repositories/1/issues?page=2",
+        "https://example.test@api.github.com/repositories/1/issues?page=2",
+        "https://api.github.com:444/repositories/1/issues?page=2",
+    ],
+)
+def test_paginate_rejects_unsafe_next_link_before_second_request(next_url: str) -> None:
+    session = FakeSession([response(200, [{"number": 1}], link=f'<{next_url}>; rel="next"')])
+
+    with pytest.raises(AuditIssueError, match="outside https://api.github.com"):
+        client(session).issues()
+
+    assert len(session.requests) == 1
+
+
 def test_ensure_label_url_encodes_name_and_creates_missing_label() -> None:
     session = FakeSession([response(404, {}), response(201, {"name": "FLS audit"})])
 

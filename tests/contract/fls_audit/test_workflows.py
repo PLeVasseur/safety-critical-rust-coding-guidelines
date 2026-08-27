@@ -38,9 +38,9 @@ def test_build_freshness_policy_and_required_context() -> None:
     assert all(step.get("name") != "Run FLS audit tests" for step in build["steps"])
     build_step = next(step for step in build["steps"] if step.get("name") == "Build documentation")
     assert "inputs.enforce_spec_lock" in build_step["env"]["ENFORCE_SPEC_LOCK"]
+    assert build_step["shell"] == "bash"
     assert "--ignore-spec-lock-diff" in build_step["run"]
     assert "PIPESTATUS[0]" in build_step["run"]
-    assert build_step["run"].count("|| true") == 3
 
 
 @pytest.mark.contract

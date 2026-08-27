@@ -46,6 +46,8 @@ It's a fairly common occurrence for the build to break due to an out of date spe
 
 The file is checked against the current live version of the specification, which means that your local development may go out of date while you are developing a feature.
 
+CI enforcement differs by workflow; see the [FLS CI enforcement policy](docs/fls-audit.md#ci-enforcement-policy) for the blocking and nonblocking paths.
+
 #### Continuing work while on a feature branch
 
 If you run into this while developing a coding guideline, you may ignore this error by running the build with:

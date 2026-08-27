@@ -1,5 +1,5 @@
 import re
-import time
+from collections.abc import Callable
 from typing import Any, Protocol, runtime_checkable
 
 from .errors import AuditIssueError
@@ -11,7 +11,9 @@ from .render import (
     transition_comment,
 )
 from .state import (
+    DEFAULT_BODY_LIMITS,
     MANAGED_START,
+    BodyLimits,
     batch_id,
     campaign_id,
     canonical_items,
@@ -34,6 +36,8 @@ LEGACY_BASELINE_RE = re.compile(r"^- Baseline commit: `(?P<commit>[0-9a-f]{40})`
 
 @runtime_checkable
 class IssueClient(Protocol):
+    sleep: Callable[[float], None]
+
     def ensure_label(self, label: str) -> None: ...
 
     def issues(self) -> list[dict[str, Any]]: ...
@@ -69,13 +73,14 @@ def is_actions_bot_record(value: dict[str, Any]) -> bool:
 def audit_issues(
     issues: list[dict[str, Any]],
     title_prefix: str,
+    limits: BodyLimits = DEFAULT_BODY_LIMITS,
 ) -> list[tuple[dict[str, Any], dict[str, Any] | None]]:
     result = []
     for issue in issues:
         if "pull_request" in issue or not is_actions_bot_record(issue):
             continue
         body = str(issue.get("body") or "")
-        state = parse_state(body)
+        state = parse_state(body, limits)
         if state is not None or str(issue.get("title") or "").startswith(title_prefix):
             result.append((issue, state))
     return result
@@ -111,12 +116,15 @@ def refresh_issue_identity(
     return (client.patch_issue(int(issue["number"]), patch), True) if patch else (issue, False)
 
 
-def comment_markers(comments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def comment_markers(
+    comments: list[dict[str, Any]],
+    limits: BodyLimits = DEFAULT_BODY_LIMITS,
+) -> list[dict[str, Any]]:
     markers = [
         marker
         for comment in comments
         if is_actions_bot_record(comment)
-        and (marker := parse_batch_marker(str(comment.get("body") or ""))) is not None
+        and (marker := parse_batch_marker(str(comment.get("body") or ""), limits)) is not None
     ]
     seen: set[str] = set()
     duplicates: set[str] = set()
@@ -131,10 +139,14 @@ def comment_markers(comments: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return markers
 
 
-def verify_comment_history(state: dict[str, Any], comments: list[dict[str, Any]]) -> None:
+def verify_comment_history(
+    state: dict[str, Any],
+    comments: list[dict[str, Any]],
+    limits: BodyLimits = DEFAULT_BODY_LIMITS,
+) -> None:
     transitions = [
         marker
-        for marker in comment_markers(comments)
+        for marker in comment_markers(comments, limits)
         if marker.get("campaign") == state["campaign"] and marker.get("applied") is not None
     ]
     by_sequence: dict[int, dict[str, Any]] = {}
@@ -175,10 +187,11 @@ def verify_comment_history(state: dict[str, Any], comments: list[dict[str, Any]]
 def recover_from_comments(
     state: dict[str, Any],
     comments: list[dict[str, Any]],
+    limits: BodyLimits = DEFAULT_BODY_LIMITS,
 ) -> tuple[dict[str, Any], bool]:
     candidates = [
         marker
-        for marker in comment_markers(comments)
+        for marker in comment_markers(comments, limits)
         if marker.get("campaign") == state["campaign"]
         and isinstance(marker.get("sequence"), int)
         and marker.get("applied") is not None
@@ -231,19 +244,20 @@ def post_comment_once(
     body: str,
     value: str,
     comments: list[dict[str, Any]],
+    limits: BodyLimits = DEFAULT_BODY_LIMITS,
 ) -> None:
-    if any(marker.get("batch_id") == value for marker in comment_markers(comments)):
+    if any(marker.get("batch_id") == value for marker in comment_markers(comments, limits)):
         return
     try:
         client.post_comment(issue_number, body)
     except AuditIssueError as write_error:
         for delay in CONFIRMATION_DELAYS:
             if delay:
-                time.sleep(delay)
+                client.sleep(delay)
             try:
                 if any(
                     marker.get("batch_id") == value
-                    for marker in comment_markers(client.comments(issue_number))
+                    for marker in comment_markers(client.comments(issue_number), limits)
                 ):
                     return
             except AuditIssueError:
@@ -259,11 +273,12 @@ def reconcile_campaign(
     report_md: str,
     current: dict[str, Any],
     workflow_url: str,
+    limits: BodyLimits = DEFAULT_BODY_LIMITS,
 ) -> tuple[dict[str, Any], dict[str, Any], bool]:
     number = int(issue["number"])
     starting_state = state
     comments = client.comments(number)
-    state, recovered = recover_from_comments(state, comments)
+    state, recovered = recover_from_comments(state, comments, limits)
     previous = state["applied"]
     transitioned = previous["semantic_digest"] != current["semantic_digest"]
     if previous["semantic_digest"] == current["semantic_digest"]:
@@ -272,21 +287,30 @@ def reconcile_campaign(
     else:
         sequence = int(state["sequence"]) + 1
         value = batch_id(state["campaign"], sequence, previous["semantic_digest"], current["semantic_digest"])
-        comment = transition_comment(report, previous, current, state["campaign"], sequence, value, workflow_url)
+        comment = transition_comment(
+            report,
+            previous,
+            current,
+            state["campaign"],
+            sequence,
+            value,
+            workflow_url,
+            limits=limits,
+        )
         next_state = make_state(state["campaign"], sequence, current, state["origin_semantic_digest"])
-        managed_body(str(issue.get("body") or ""), report, report_md, next_state, workflow_url)
-        post_comment_once(client, number, comment, value, comments)
+        managed_body(str(issue.get("body") or ""), report, report_md, next_state, workflow_url, limits)
+        post_comment_once(client, number, comment, value, comments, limits)
         state = next_state
     latest = client.issue(number)
     latest_body = str(latest.get("body") or "")
-    latest_state = parse_state(latest_body)
+    latest_state = parse_state(latest_body, limits)
     if latest_state is None or latest_state["campaign"] != state["campaign"]:
         raise AuditIssueError(f"Audit issue #{number} lost its current campaign state before update")
     if compact_json(latest_state) != compact_json(starting_state):
         if compact_json(latest_state) != compact_json(state):
             raise AuditIssueError(f"Audit issue #{number} changed concurrently before update")
         starting_state = latest_state
-    body = managed_body(latest_body, report, report_md, state, workflow_url)
+    body = managed_body(latest_body, report, report_md, state, workflow_url, limits)
     state_changed = compact_json(starting_state) != compact_json(state)
     if not transitioned and not recovered and not state_changed:
         if comparable_managed_body(latest_body) == comparable_managed_body(body):
@@ -325,15 +349,16 @@ def create_issue_safely(
     label: str,
     campaign: str,
     title_prefix: str,
+    limits: BodyLimits = DEFAULT_BODY_LIMITS,
 ) -> dict[str, Any]:
     try:
         return client.create_issue(title, body, label)
     except AuditIssueError as write_error:
         for delay in CONFIRMATION_DELAYS:
             if delay:
-                time.sleep(delay)
+                client.sleep(delay)
             try:
-                match = find_campaign(audit_issues(client.issues(), title_prefix), campaign)
+                match = find_campaign(audit_issues(client.issues(), title_prefix, limits), campaign)
                 if match:
                     return match[0]
             except AuditIssueError:
@@ -348,6 +373,7 @@ def close_old_campaigns(
     current_issue_number: int | None,
     workflow_url: str,
     has_drift: bool,
+    limits: BodyLimits = DEFAULT_BODY_LIMITS,
 ) -> bool:
     changed = False
     for issue, state in sorted(issues, key=lambda value: int(value[0].get("number", 0))):
@@ -368,6 +394,7 @@ def close_old_campaigns(
             event_comment(state["campaign"], value, message, workflow_url),
             value,
             client.comments(number),
+            limits,
         )
         client.patch_issue(number, {"state": "closed", "state_reason": "completed"})
         changed = True
@@ -381,6 +408,7 @@ def close_legacy_issue(
     workflow_url: str,
     *,
     baseline_changed: bool,
+    limits: BodyLimits = DEFAULT_BODY_LIMITS,
 ) -> bool:
     if issue.get("state") != "open":
         return False
@@ -397,6 +425,7 @@ def close_legacy_issue(
         event_comment("legacy", value, message, workflow_url),
         value,
         client.comments(LEGACY_ISSUE_NUMBER),
+        limits,
     )
     client.patch_issue(LEGACY_ISSUE_NUMBER, {"state": "closed", "state_reason": "completed"})
     return True
@@ -411,8 +440,9 @@ def verify_reconciliation_once(
     title_prefix: str,
     label: str,
     has_drift: bool,
+    limits: BodyLimits = DEFAULT_BODY_LIMITS,
 ) -> None:
-    issue_values = audit_issues(client.issues(), title_prefix)
+    issue_values = audit_issues(client.issues(), title_prefix, limits)
     find_campaign(issue_values, campaign)
     obsolete = [
         issue
@@ -434,7 +464,7 @@ def verify_reconciliation_once(
     if len(records) != 1:
         raise AuditIssueError(f"Expected one current FLS audit issue #{issue_number}; found {len(records)}")
     issue = records[0]
-    state = parse_state(str(issue.get("body") or ""))
+    state = parse_state(str(issue.get("body") or ""), limits)
     if state is None or compact_json(state) != compact_json(expected_state):
         raise AuditIssueError(f"FLS audit issue #{issue_number} state does not match the reconciled report")
     if issue.get("title") != title or label not in issue_labels(issue):
@@ -453,14 +483,23 @@ def verify_reconciliation(
     title_prefix: str,
     label: str,
     has_drift: bool,
+    limits: BodyLimits = DEFAULT_BODY_LIMITS,
 ) -> None:
     issue_error: Exception | None = None
     for delay in VERIFICATION_DELAYS:
         if delay:
-            time.sleep(delay)
+            client.sleep(delay)
         try:
             verify_reconciliation_once(
-                client, campaign, issue_number, expected_state, title, title_prefix, label, has_drift
+                client,
+                campaign,
+                issue_number,
+                expected_state,
+                title,
+                title_prefix,
+                label,
+                has_drift,
+                limits,
             )
         except AuditIssueError as current_error:
             issue_error = current_error
@@ -476,9 +515,9 @@ def verify_reconciliation(
     comment_error: Exception | None = None
     for delay in VERIFICATION_DELAYS:
         if delay:
-            time.sleep(delay)
+            client.sleep(delay)
         try:
-            verify_comment_history(expected_state, client.comments(issue_number))
+            verify_comment_history(expected_state, client.comments(issue_number), limits)
         except AuditIssueError as current_error:
             comment_error = current_error
             continue
@@ -495,14 +534,16 @@ def reconcile(
     label: str,
     title_prefix: str,
     workflow_url: str = "",
+    *,
+    limits: BodyLimits = DEFAULT_BODY_LIMITS,
 ) -> str:
-    client.ensure_label(label)
     campaign = campaign_id(spec_lock)
     items = canonical_items(report)
     current = make_applied(report, report_md, items)
     title = expected_title(title_prefix, campaign)
+    client.ensure_label(label)
     all_issues = client.issues()
-    audit_issue_values = audit_issues(all_issues, title_prefix)
+    audit_issue_values = audit_issues(all_issues, title_prefix, limits)
     match = find_campaign(audit_issue_values, campaign)
     legacy = next((value for value in all_issues if int(value.get("number", 0)) == LEGACY_ISSUE_NUMBER), None)
     legacy_recorded = legacy_baseline(legacy, label, title_prefix) if legacy else None
@@ -528,7 +569,7 @@ def reconcile(
             changed = True
     elif items:
         state = make_state(campaign, 0, current)
-        body = managed_body("", report, report_md, state, workflow_url)
+        body = managed_body("", report, report_md, state, workflow_url, limits)
         if legacy and legacy_recorded == current_baseline:
             body = managed_body(
                 archived_pre_campaign_body(str(legacy.get("body") or "")),
@@ -536,20 +577,21 @@ def reconcile(
                 report_md,
                 state,
                 workflow_url,
+                limits,
             )
             patch: dict[str, Any] = {"title": title, "body": body}
             if legacy.get("state") == "closed":
                 patch["state"] = "open"
             issue = client.patch_issue(LEGACY_ISSUE_NUMBER, patch)
         else:
-            issue = create_issue_safely(client, title, body, label, campaign, title_prefix)
-            parsed = parse_state(str(issue.get("body") or ""))
+            issue = create_issue_safely(client, title, body, label, campaign, title_prefix, limits)
+            parsed = parse_state(str(issue.get("body") or ""), limits)
             state = parsed or state
         changed = True
 
     if issue is not None and state is not None:
         issue, state, reconciled = reconcile_campaign(
-            client, issue, state, report, report_md, current, workflow_url
+            client, issue, state, report, report_md, current, workflow_url, limits
         )
         changed |= reconciled
         if not items and issue.get("state") == "open":
@@ -563,11 +605,30 @@ def reconcile(
             campaign,
             workflow_url,
             baseline_changed=legacy_recorded != current_baseline,
+            limits=limits,
         )
 
     current_number = int(issue["number"]) if issue else None
-    changed |= close_old_campaigns(client, audit_issue_values, campaign, current_number, workflow_url, bool(items))
-    verify_reconciliation(client, campaign, current_number, state, title, title_prefix, label, bool(items))
+    changed |= close_old_campaigns(
+        client,
+        audit_issue_values,
+        campaign,
+        current_number,
+        workflow_url,
+        bool(items),
+        limits,
+    )
+    verify_reconciliation(
+        client,
+        campaign,
+        current_number,
+        state,
+        title,
+        title_prefix,
+        label,
+        bool(items),
+        limits,
+    )
 
     if issue is None:
         return "Reconciled old audit campaigns." if changed else "No changes found and no current campaign issue exists."

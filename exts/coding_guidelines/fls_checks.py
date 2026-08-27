@@ -392,9 +392,8 @@ def check_fls_lock_consistency(app, env, fls_raw_data):
                 temp_path = fls_diff.write_detailed_report(detailed_differences)
                 log = logger.warning if app.config.enable_spec_lock_consistency else logger.info
                 log(f"Detailed FLS differences written to: {temp_path}")
-            except Exception as e:
-                log = logger.error if app.config.enable_spec_lock_consistency else logger.info
-                log(f"Failed to write detailed differences to temp file: {e}")
+            except Exception as error:
+                logger.warning(f"Failed to write detailed differences to temp file: {error}")
 
         summary = fls_diff.build_summary(affected_guidelines, has_differences)
 

@@ -1,10 +1,16 @@
-import hashlib
+from pathlib import Path
 
 import pytest
 
 from scripts.fls_audit_issue_lib import render, state
 from scripts.fls_audit_issue_lib.errors import AuditIssueError
 from tests.fls_audit_fixtures import report_with_changes, spec_lock
+
+GOLDEN_DIR = Path(__file__).resolve().parents[2] / "fixtures" / "fls_audit" / "golden"
+
+
+def golden(name: str) -> str:
+    return (GOLDEN_DIR / name).read_text(encoding="utf-8").removesuffix("\n")
 
 
 def test_managed_body_preserves_human_text() -> None:
@@ -30,7 +36,7 @@ def test_managed_body_preserves_human_text() -> None:
     assert state.parse_state(updated) == issue_state
 
 
-def test_rendering_characterization() -> None:
+def test_rendering_matches_goldens() -> None:
     report = report_with_changes()
     applied = state.make_applied(report, "# Current report\n", state.canonical_items(report))
     issue_state = state.make_state(state.campaign_id(spec_lock()), 0, applied)
@@ -50,12 +56,8 @@ def test_rendering_characterization() -> None:
         "",
     )
 
-    assert hashlib.sha256(body.encode()).hexdigest() == (
-        "d8af32ac867ed1aec7a6351f27dd455687009a7437a4c57207bfa41fb44a6a31"
-    )
-    assert hashlib.sha256(comment.encode()).hexdigest() == (
-        "f12f2982578d2dc338c31cc68ed3043bcf545e71a6eb0d4287c3d41ca35deb9f"
-    )
+    assert body == golden("issue-body.md")
+    assert comment == golden("transition-comment.md")
 
 
 def test_transition_comment_lists_all_net_changes() -> None:
@@ -79,21 +81,21 @@ def test_transition_comment_lists_all_net_changes() -> None:
     assert marker["previous_semantic_digest"] == previous["semantic_digest"]
 
 
-def test_compact_comment_fails_before_silent_truncation(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_compact_comment_fails_before_silent_truncation() -> None:
     report = report_with_changes()
     previous = state.make_applied(report, "# Report\n", {})
     current = state.make_applied(report, "# Report\n", state.canonical_items(report))
     campaign = state.campaign_id(spec_lock())
     value = state.batch_id(campaign, 1, previous["semantic_digest"], current["semantic_digest"])
-    monkeypatch.setattr(state, "MAX_COMMENT_BODY_BYTES", 20)
+    limits = state.BodyLimits(comment_body_bytes=20)
 
     with pytest.raises(AuditIssueError, match="Compact transition comment"):
-        render.transition_comment(report, previous, current, campaign, 1, value, "")
+        render.transition_comment(report, previous, current, campaign, 1, value, "", limits=limits)
 
 
 def test_compact_issue_body_ignores_workflow_url_for_idempotence() -> None:
     report = report_with_changes()
-    report_md = f"# Report\n{'x' * state.MAX_ISSUE_BODY_BYTES}\n"
+    report_md = f"# Report\n{'x' * state.DEFAULT_BODY_LIMITS.issue_body_bytes}\n"
     applied = state.make_applied(report, report_md, state.canonical_items(report))
     issue_state = state.make_state(state.campaign_id(spec_lock()), 0, applied)
 

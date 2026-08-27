@@ -24,6 +24,8 @@ class FakeGitHubClient:
         self.read_failures: dict[str, int] = {}
         self.read_failures_after_write: dict[str, int] = {}
         self.issue_read_hook: Callable[[dict[str, Any]], None] | None = None
+        self.sleep_delays: list[float] = []
+        self.sleep = self.sleep_delays.append
 
     def fail(self, operation: str, timing: str) -> None:
         self.failures[operation] = timing

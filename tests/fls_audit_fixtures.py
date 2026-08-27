@@ -56,6 +56,33 @@ def report_with_changes(*, live_checksum: str = "live-a", affected: bool = True)
     }
 
 
+def report_with_structural_changes() -> dict:
+    report = report_with_changes()
+    report["header_changes"] = [
+        {
+            "section_id": "fls_section",
+            "document_title_before": "Expressions",
+            "document_title_after": "Expression semantics",
+            "section_title_before": "Evaluation",
+            "section_title_after": "Expression evaluation",
+            "section_path_before": "3.1",
+            "section_path_after": "3.2",
+        }
+    ]
+    report["section_reorders"] = [
+        {
+            "section_id": "fls_reordered",
+            "title": "Reordered section",
+            "path_before": "4.1",
+            "path_after": "4.3",
+            "document": "expressions.rst",
+        }
+    ]
+    report["summary"]["header_changed"] = 1
+    report["summary"]["section_reordered"] = 1
+    return report
+
+
 def spec_lock() -> dict:
     return {
         "documents": [{"link": "one.html", "sections": [{"id": "fls_one"}]}],

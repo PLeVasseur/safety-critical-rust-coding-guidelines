@@ -1,11 +1,12 @@
 from typing import Any
 
-from . import state as state_model
 from .errors import AuditIssueError
 from .state import (
+    DEFAULT_BODY_LIMITS,
     MANAGED_END,
     MANAGED_START,
     STATE_RE,
+    BodyLimits,
     batch_marker,
     check_size,
     diff_items,
@@ -98,16 +99,17 @@ def managed_body(
     report_md: str,
     state: dict[str, Any],
     workflow_url: str,
+    limits: BodyLimits = DEFAULT_BODY_LIMITS,
 ) -> str:
     instructions = build_instructions(report, workflow_url)
     managed = f"{MANAGED_START}\n{instructions}{report_md.rstrip()}\n\n{state_marker(state)}\n{MANAGED_END}"
     candidate = replace_managed(existing_body, managed)
-    if len(candidate.encode("utf-8")) <= state_model.MAX_ISSUE_BODY_BYTES:
+    if len(candidate.encode("utf-8")) <= limits.issue_body_bytes:
         return candidate
     compact = compact_report(report, state["applied"]["items"], workflow_url)
     managed = f"{MANAGED_START}\n{instructions}{compact}\n\n{state_marker(state)}\n{MANAGED_END}"
     candidate = replace_managed(existing_body, managed)
-    check_size(candidate, state_model.MAX_ISSUE_BODY_BYTES, "Compact issue body")
+    check_size(candidate, limits.issue_body_bytes, "Compact issue body")
     return candidate
 
 
@@ -155,6 +157,7 @@ def transition_comment(
     value: str,
     workflow_url: str,
     *,
+    limits: BodyLimits = DEFAULT_BODY_LIMITS,
     include_diffs: bool = True,
 ) -> str:
     previous_items = previous["items"]
@@ -190,7 +193,7 @@ def transition_comment(
     lines.extend(["", "### Currently affected guidelines", *affected_guidelines(report), ""])
     lines.append(batch_marker(campaign, sequence, value, current, previous["semantic_digest"]))
     body = "\n".join(lines)
-    if len(body.encode("utf-8")) <= state_model.MAX_COMMENT_BODY_BYTES:
+    if len(body.encode("utf-8")) <= limits.comment_body_bytes:
         return body
     if include_diffs:
         return transition_comment(
@@ -201,9 +204,10 @@ def transition_comment(
             sequence,
             value,
             workflow_url,
+            limits=limits,
             include_diffs=False,
         )
-    check_size(body, state_model.MAX_COMMENT_BODY_BYTES, "Compact transition comment")
+    check_size(body, limits.comment_body_bytes, "Compact transition comment")
     return body
 
 

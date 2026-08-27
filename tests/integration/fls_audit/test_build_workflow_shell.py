@@ -8,13 +8,12 @@ import yaml
 ROOT = Path(__file__).resolve().parents[3]
 
 
-def build_script() -> str:
+def workflow_step(name: str) -> dict:
     workflow = yaml.load(
         (ROOT / ".github" / "workflows" / "build-guidelines.yml").read_text(encoding="utf-8"),
         Loader=yaml.BaseLoader,
     )
-    step = next(step for step in workflow["jobs"]["build"]["steps"] if step.get("name") == "Build documentation")
-    return step["run"]
+    return next(step for step in workflow["jobs"]["build"]["steps"] if step.get("name") == name)
 
 
 def run_build_script(
@@ -46,7 +45,7 @@ exit "$UV_EXIT"
         "UV_OUTPUT": uv_output,
     }
     result = subprocess.run(
-        ["bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", build_script()],
+        ["bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", workflow_step("Build documentation")["run"]],
         cwd=tmp_path,
         env=env,
         check=False,
@@ -56,6 +55,18 @@ exit "$UV_EXIT"
     return result, args_file.read_text(encoding="utf-8")
 
 
+def run_prerequisite_script(check_result: str, audit_result: str) -> subprocess.CompletedProcess[str]:
+    script = workflow_step("Fail if prerequisite checks failed")["run"]
+    script = script.replace("${{ needs.check_rust_examples.result }}", check_result)
+    script = script.replace("${{ needs.fls_audit_tests.result }}", audit_result)
+    return subprocess.run(
+        ["bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
 @pytest.mark.integration
 @pytest.mark.parametrize(("enforce", "ignored"), [(False, True), (True, False)])
 def test_build_shell_selects_freshness_policy(tmp_path: Path, enforce: bool, ignored: bool) -> None:
@@ -63,6 +74,27 @@ def test_build_shell_selects_freshness_policy(tmp_path: Path, enforce: bool, ign
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert ("--ignore-spec-lock-diff" in args) is ignored
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("check_result", "audit_result", "expected", "unexpected"),
+    [
+        ("failure", "success", "check_rust_examples workflow failed", "fls_audit_tests job finished"),
+        ("success", "failure", "fls_audit_tests job finished", "check_rust_examples workflow failed"),
+    ],
+)
+def test_prerequisite_shell_annotates_only_failed_job(
+    check_result: str,
+    audit_result: str,
+    expected: str,
+    unexpected: str,
+) -> None:
+    result = run_prerequisite_script(check_result, audit_result)
+
+    assert result.returncode == 1
+    assert expected in result.stdout
+    assert unexpected not in result.stdout
 
 
 @pytest.mark.integration
