@@ -15,6 +15,10 @@ Build the rendered version by running:
 uv run --frozen make.py
 ```
 
+The required uv version is pinned in `pyproject.toml`. Until a tooling owner is
+assigned, periodic uv upgrades are a shared maintainer responsibility: update
+the uv runtime pin, the `uv_build` range, and `uv.lock` together in one PR.
+
 By default, Sphinx uses incremental rebuilds to generate the content that
 changed since the last invocation. If you notice a problem with incremental
 rebuilds, pass the `-c` flag to clear the existing artifacts before
@@ -48,6 +52,11 @@ The file is checked against the current live version of the specification, which
 
 CI enforcement differs by workflow; see the [FLS CI enforcement policy](docs/fls-audit.md#ci-enforcement-policy) for the blocking and nonblocking paths.
 
+Release maintainers must run `Release Preflight` with the exact intended commit
+SHA before pushing a version tag. First publication requires a successful
+preflight from the preceding 24 hours; see the
+[release procedure](docs/fls-audit.md#release-preflight-and-deploy).
+
 #### Continuing work while on a feature branch
 
 If you run into this while developing a coding guideline, you may ignore this error by running the build with:
@@ -73,7 +82,7 @@ uv run python scripts/fls_audit.py
 ```
 
 See [FLS audit docs](docs/fls-audit.md) for the full workflow, snapshots, advanced options, and
-the steps to rationalize and update `src/spec.lock`, including the srationalization checklist.
+the steps to rationalize and update `src/spec.lock`, including the rationalization checklist.
 
 ## What we're working on
 
