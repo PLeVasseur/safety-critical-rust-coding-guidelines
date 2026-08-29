@@ -211,19 +211,6 @@ def transition_comment(
     return body
 
 
-def archived_pre_campaign_body(body: str) -> str:
-    return "\n".join(
-        [
-            "<details>",
-            "<summary>Pre-campaign audit body</summary>",
-            "",
-            body.rstrip(),
-            "",
-            "</details>",
-        ]
-    )
-
-
 def event_comment(campaign: str, value: str, message: str, workflow_url: str) -> str:
     lines = [message]
     if workflow_url:

@@ -184,24 +184,34 @@ evidence justifies its continuing maintenance cost.
    change the rendering/state policy in a reviewed code change; do not truncate
    the issue manually.
 
-## One-time issue #1236 adoption
+## Predecessor issue cutover
 
-Issue `#1236` predates campaign markers. The reconciler has one narrow adoption
-path for that exact issue. It requires the expected Actions bot author, title
-form, `fls-audit` label, generated report headings, exactly one valid baseline
-commit, and no conflicting campaign marker. The baseline must match the current
-report before the issue can become the current campaign. Its complete old body
-is archived outside the managed region and its comments are left untouched.
+Issues created by the predecessor audit workflow have no campaign marker. Closed
+stateless issues are immutable history: the reconciler does not adopt, reopen,
+comment on, close, or otherwise mutate them. A trusted, title-matching stateless
+issue that is not closed blocks reconciliation before any write. Closed issues
+with malformed managed markers still fail closed rather than being mistaken for
+predecessor history.
 
-Immediately before the first production audit using this code, recheck those
-assumptions. If the issue changed, stop rather than broadening the recognizer.
+Before the first production run, disable the predecessor schedule or perform the
+cutover immediately after its daily run. Inventory a conservative, null-safe
+superset of the audit issues recognized by the reconciler. The command uses the
+same immutable bot identity and includes both title matches and managed-state
+syntax; the reconciler's parser remains authoritative for marker validity:
 
-Remove the dedicated adoption code and tests after the first production run has
-adopted or definitively closed `#1236`, the issue has managed state or is clearly
-historical, and a second unchanged run performs zero issue writes. This is not a
-general legacy compatibility mechanism. Remove the recognizer, pre-campaign body
-archival path, legacy close path, dedicated tests, and this section in a separate
-cleanup PR.
+```shell
+gh api --method GET --paginate \
+  -f state=all -f per_page=100 \
+  repos/rustfoundation/safety-critical-rust-coding-guidelines/issues \
+  --jq '.[] | select(.pull_request == null) | select(.user.login == "github-actions[bot]" and .user.id == 41898282 and .user.type == "Bot") | select((.title | startswith("FLS audit:")) or ((.body // "") | contains("fls-audit:state:")) or ((.body // "") | contains("<!-- fls-audit:managed:start -->")) or ((.body // "") | contains("<!-- fls-audit:managed:end -->"))) | [.number, .state, (if ((.body // "") | contains("fls-audit:state:")) then "state-syntax" else "stateless" end), .title] | @tsv'
+```
+
+Close every open stateless predecessor, including `#1236`, with a short comment
+that it is retained as pre-marker audit history. Do not delete or rewrite closed
+predecessors. Re-run the inventory and require every stateless row to be closed
+before enabling or dispatching the new reconciler. If drift remains, the first
+run creates one fresh managed campaign issue. A second unchanged run must report
+that issue as current and perform zero issue writes.
 
 ## Outputs
 

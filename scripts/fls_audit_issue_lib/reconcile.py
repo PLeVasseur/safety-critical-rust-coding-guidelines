@@ -1,10 +1,8 @@
-import re
 from collections.abc import Callable
 from typing import Any, Protocol, runtime_checkable
 
 from .errors import AuditIssueError
 from .render import (
-    archived_pre_campaign_body,
     comparable_managed_body,
     event_comment,
     managed_body,
@@ -12,6 +10,7 @@ from .render import (
 )
 from .state import (
     DEFAULT_BODY_LIMITS,
+    MANAGED_END,
     MANAGED_START,
     BodyLimits,
     batch_id,
@@ -22,16 +21,13 @@ from .state import (
     make_state,
     parse_batch_marker,
     parse_state,
-    report_commit,
     sha256_json,
 )
 
-LEGACY_ISSUE_NUMBER = 1236
 ACTIONS_BOT_LOGIN = "github-actions[bot]"
 ACTIONS_BOT_ID = 41898282
 CONFIRMATION_DELAYS = (0, 1, 2, 4, 8)
 VERIFICATION_DELAYS = (0, 1, 2)
-LEGACY_BASELINE_RE = re.compile(r"^- Baseline commit: `(?P<commit>[0-9a-f]{40})`$", re.MULTILINE)
 
 
 @runtime_checkable
@@ -80,7 +76,10 @@ def audit_issues(
         if "pull_request" in issue or not is_actions_bot_record(issue):
             continue
         body = str(issue.get("body") or "")
-        state = parse_state(body, limits)
+        closed_markerless = issue.get("state") == "closed" and not any(
+            marker in body for marker in ("fls-audit:state:", MANAGED_START, MANAGED_END)
+        )
+        state = None if closed_markerless else parse_state(body, limits)
         if state is not None or str(issue.get("title") or "").startswith(title_prefix):
             result.append((issue, state))
     return result
@@ -318,30 +317,6 @@ def reconcile_campaign(
     return client.patch_issue(number, {"body": body}), state, True
 
 
-def legacy_baseline(issue: dict[str, Any], label: str, title_prefix: str) -> str | None:
-    if (
-        int(issue.get("number", 0)) != LEGACY_ISSUE_NUMBER
-        or "pull_request" in issue
-        or not is_actions_bot_record(issue)
-    ):
-        return None
-    if label not in issue_labels(issue) or not str(issue.get("title") or "").startswith(
-        f"{title_prefix} changes detected ("
-    ):
-        return None
-    body = str(issue.get("body") or "")
-    if MANAGED_START in body or "fls-audit:state:" in body:
-        return None
-    if "## What to do" not in body or "# FLS Spec Lock Audit Report" not in body:
-        raise AuditIssueError(f"Legacy audit issue #{LEGACY_ISSUE_NUMBER} has an unrecognized body")
-    matches = list(LEGACY_BASELINE_RE.finditer(body))
-    if len(matches) != 1:
-        raise AuditIssueError(
-            f"Pre-campaign audit issue #{LEGACY_ISSUE_NUMBER} must contain exactly one baseline commit"
-        )
-    return matches[0].group("commit")
-
-
 def create_issue_safely(
     client: IssueClient,
     title: str,
@@ -399,36 +374,6 @@ def close_old_campaigns(
         client.patch_issue(number, {"state": "closed", "state_reason": "completed"})
         changed = True
     return changed
-
-
-def close_legacy_issue(
-    client: IssueClient,
-    issue: dict[str, Any],
-    campaign: str,
-    workflow_url: str,
-    *,
-    baseline_changed: bool,
-    limits: BodyLimits = DEFAULT_BODY_LIMITS,
-) -> bool:
-    if issue.get("state") != "open":
-        return False
-    kind = "legacy-baseline-changed" if baseline_changed else "legacy-clean"
-    value = sha256_json({"issue": LEGACY_ISSUE_NUMBER, "campaign": campaign, "type": kind})
-    message = (
-        "The committed `spec.lock` baseline changed, so this legacy audit issue is superseded."
-        if baseline_changed
-        else "The current audit is clean, so this legacy audit issue is complete."
-    )
-    post_comment_once(
-        client,
-        LEGACY_ISSUE_NUMBER,
-        event_comment("legacy", value, message, workflow_url),
-        value,
-        client.comments(LEGACY_ISSUE_NUMBER),
-        limits,
-    )
-    client.patch_issue(LEGACY_ISSUE_NUMBER, {"state": "closed", "state_reason": "completed"})
-    return True
 
 
 def verify_reconciliation_once(
@@ -541,21 +486,17 @@ def reconcile(
     items = canonical_items(report)
     current = make_applied(report, report_md, items)
     title = expected_title(title_prefix, campaign)
-    client.ensure_label(label)
-    all_issues = client.issues()
-    audit_issue_values = audit_issues(all_issues, title_prefix, limits)
+    audit_issue_values = audit_issues(client.issues(), title_prefix, limits)
     match = find_campaign(audit_issue_values, campaign)
-    legacy = next((value for value in all_issues if int(value.get("number", 0)) == LEGACY_ISSUE_NUMBER), None)
-    legacy_recorded = legacy_baseline(legacy, label, title_prefix) if legacy else None
     damaged = [
         issue
         for issue, state in audit_issue_values
-        if state is None and (int(issue.get("number", 0)) != LEGACY_ISSUE_NUMBER or legacy_recorded is None)
+        if state is None and issue.get("state") != "closed"
     ]
     if damaged:
         numbers = ", ".join(f"#{issue.get('number')}" for issue in damaged)
-        raise AuditIssueError(f"Bot-owned FLS audit issues have no valid campaign state: {numbers}")
-    current_baseline = report_commit(report, "baseline_commit")
+        raise AuditIssueError(f"Non-closed bot-owned FLS audit issues have no valid campaign state: {numbers}")
+    client.ensure_label(label)
     issue: dict[str, Any] | None = None
     state: dict[str, Any] | None = None
     changed = False
@@ -570,23 +511,9 @@ def reconcile(
     elif items:
         state = make_state(campaign, 0, current)
         body = managed_body("", report, report_md, state, workflow_url, limits)
-        if legacy and legacy_recorded == current_baseline:
-            body = managed_body(
-                archived_pre_campaign_body(str(legacy.get("body") or "")),
-                report,
-                report_md,
-                state,
-                workflow_url,
-                limits,
-            )
-            patch: dict[str, Any] = {"title": title, "body": body}
-            if legacy.get("state") == "closed":
-                patch["state"] = "open"
-            issue = client.patch_issue(LEGACY_ISSUE_NUMBER, patch)
-        else:
-            issue = create_issue_safely(client, title, body, label, campaign, title_prefix, limits)
-            parsed = parse_state(str(issue.get("body") or ""), limits)
-            state = parsed or state
+        issue = create_issue_safely(client, title, body, label, campaign, title_prefix, limits)
+        parsed = parse_state(str(issue.get("body") or ""), limits)
+        state = parsed or state
         changed = True
 
     if issue is not None and state is not None:
@@ -597,16 +524,6 @@ def reconcile(
         if not items and issue.get("state") == "open":
             issue = client.patch_issue(int(issue["number"]), {"state": "closed", "state_reason": "completed"})
             changed = True
-
-    if legacy and legacy_recorded and (issue is None or int(issue["number"]) != LEGACY_ISSUE_NUMBER):
-        changed |= close_legacy_issue(
-            client,
-            legacy,
-            campaign,
-            workflow_url,
-            baseline_changed=legacy_recorded != current_baseline,
-            limits=limits,
-        )
 
     current_number = int(issue["number"]) if issue else None
     changed |= close_old_campaigns(
