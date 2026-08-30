@@ -184,7 +184,7 @@ evidence justifies its continuing maintenance cost.
    change the rendering/state policy in a reviewed code change; do not truncate
    the issue manually.
 
-## Predecessor issue cutover
+## Predecessor audit issues
 
 Issues created by the predecessor audit workflow have no campaign marker. Closed
 stateless issues are immutable history: the reconciler does not adopt, reopen,
@@ -193,25 +193,10 @@ issue that is not closed blocks reconciliation before any write. Closed issues
 with malformed managed markers still fail closed rather than being mistaken for
 predecessor history.
 
-Before the first production run, disable the predecessor schedule or perform the
-cutover immediately after its daily run. Inventory a conservative, null-safe
-superset of the audit issues recognized by the reconciler. The command uses the
-same immutable bot identity and includes both title matches and managed-state
-syntax; the reconciler's parser remains authoritative for marker validity:
-
-```shell
-gh api --method GET --paginate \
-  -f state=all -f per_page=100 \
-  repos/rustfoundation/safety-critical-rust-coding-guidelines/issues \
-  --jq '.[] | select(.pull_request == null) | select(.user.login == "github-actions[bot]" and .user.id == 41898282 and .user.type == "Bot") | select((.title | startswith("FLS audit:")) or ((.body // "") | contains("fls-audit:state:")) or ((.body // "") | contains("<!-- fls-audit:managed:start -->")) or ((.body // "") | contains("<!-- fls-audit:managed:end -->"))) | [.number, .state, (if ((.body // "") | contains("fls-audit:state:")) then "state-syntax" else "stateless" end), .title] | @tsv'
-```
-
-Close every open stateless predecessor, including `#1236`, with a short comment
-that it is retained as pre-marker audit history. Do not delete or rewrite closed
-predecessors. Re-run the inventory and require every stateless row to be closed
-before enabling or dispatching the new reconciler. If drift remains, the first
-run creates one fresh managed campaign issue. A second unchanged run must report
-that issue as current and perform zero issue writes.
+After the campaign reconciler is merged, if a run names a non-closed stateless
+predecessor, verify that the predecessor workflow can no longer run, comment that
+the issue is retained as pre-marker audit history, close it, and rerun the
+reconciler. Do not delete or rewrite closed predecessors.
 
 ## Outputs
 
