@@ -40,9 +40,13 @@ If you're working without internet access or want to avoid reaching out to remot
 uv run --frozen make.py --offline
 ```
 
-This prevents the build system from attempting to fetch remote resources, such as updates to the specification. Use this flag when you need reproducible or air-gapped builds.
+With the required dependencies available, this makes FLS validation use the
+committed `src/spec.lock` instead of fetching current FLS paragraph data. It
+does not make the complete command air-gapped or byte-for-byte reproducible:
+`uv` may need to retrieve locked dependencies, and hosted workflows continue to
+use GitHub services.
 
-Use `--offline` if you are running `make.py` frequently during development, to prevent rate-limiting due to repeated requests to the [the FLS](https://rust-lang.github.io/fls/paragraph-ids.json).
+Use `--offline` if you are running `make.py` frequently during development, to prevent rate-limiting due to repeated requests to the [FLS](https://rust-lang.github.io/fls/paragraph-ids.json).
 
 ### Checking an out-of-date spec lock file
 
@@ -51,11 +55,6 @@ It is fairly common for `src/spec.lock` to become outdated while a contributor i
 Local and normal CI builds report this drift without failing solely because of it. Missing or malformed lock data and invalid FLS references still fail the build.
 
 CI enforcement differs by workflow; see the [FLS CI enforcement policy](docs/fls-audit.md#ci-enforcement-policy) for the blocking and nonblocking paths.
-
-Release maintainers must run `Release Preflight` with the exact intended commit
-SHA before pushing a version tag. First publication requires a successful
-preflight from the preceding 24 hours; see the
-[release procedure](docs/fls-audit.md#release-preflight-and-deploy).
 
 #### Enforcing freshness locally
 
@@ -83,6 +82,14 @@ uv run python scripts/fls_audit.py
 
 See [FLS audit docs](docs/fls-audit.md) for the full workflow, snapshots, advanced options, and
 the steps to rationalize and update `src/spec.lock`, including the rationalization checklist.
+
+## Releasing
+
+Release maintainers must run `Release Preflight` for the exact intended commit
+before creating a version tag. Follow [RELEASING.md](RELEASING.md), the
+canonical release procedure, for selecting a candidate, handling a moving
+`main` branch, tagging the preflighted commit, verifying deployment, and
+recovering from failures.
 
 ## What we're working on
 

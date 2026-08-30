@@ -36,6 +36,11 @@ uv run --frozen make.py --enforce-spec-lock-diff
 
 ## Release preflight and deploy
 
+The canonical step-by-step maintainer procedure is [RELEASING.md](../RELEASING.md).
+It covers the GitHub branch selector and SHA input, a moving `main` branch,
+temporary candidate branches, exact-commit tagging, deployment verification,
+and failure recovery.
+
 Run the `Release Preflight` workflow against a branch whose head is the commit to
 be released, and enter that commit's full 40-character SHA in the required
 `release_sha` input. The workflow fails unless the selected branch resolves to
@@ -61,31 +66,11 @@ GitHub Actions, locked package availability, and GitHub Pages; it is decoupled
 specifically from mutable live FLS state and is not claimed to be a
 byte-for-byte reproducible build.
 
-Release procedure:
-
-1. Merge all intended release changes and identify the exact commit to tag.
-2. Run `Release Preflight` from the ref at that commit and provide its full SHA.
-3. Confirm the workflow and its `release-preflight` commit status succeeded.
-4. Within 24 hours, create the version tag on that exact commit.
-5. Confirm Deploy authorizes the commit, builds offline, publishes Pages, and
-   records `deploy/<tag>`.
-
-If the default branch has advanced beyond the intended release commit, create a
-temporary remote branch whose head is exactly that commit and select the
-temporary branch when dispatching `Release Preflight`. The ancestry check still
-requires the commit to be reachable from the default branch. Delete the
-temporary branch after the preflight run completes; do not reset the default
-branch or move a release tag to create this dispatch point.
-
-Do not move a tag to recover a failed release. If the tagged commit can still
-pass preflight, run preflight for that exact commit and rerun Deploy. If it
-cannot, reconcile the FLS baseline or other release failure in a new commit and
-create a new version tag. A successful preflight deliberately remains valid
-for first publication when the live FLS moves during the subsequent 24-hour
-window; Nightly and the scheduled audit report that movement for the next
-synchronization cycle. The freshness check tolerates up to five minutes of
-GitHub/runner clock skew; a timestamp farther in the future fails with a
-separate diagnostic.
+A successful preflight deliberately remains valid for first publication when
+the live FLS moves during the subsequent 24-hour window. Nightly and the
+scheduled audit report that movement for the next synchronization cycle. The
+freshness check tolerates up to five minutes of GitHub and runner clock skew; a
+timestamp farther in the future fails with a separate diagnostic.
 
 ## Rolling audit issue
 
