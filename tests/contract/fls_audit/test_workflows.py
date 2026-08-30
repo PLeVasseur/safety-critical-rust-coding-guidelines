@@ -124,7 +124,7 @@ def test_nightly_preflight_and_deploy_freshness_policy() -> None:
 def test_audit_schedule_manual_guard_permissions_and_artifact() -> None:
     workflow = load_workflow("fls-audit.yml")
 
-    assert workflow["on"]["schedule"][0]["cron"] == "0 4 * * *"
+    assert workflow["on"]["schedule"][0]["cron"] == "23 4 * * *"
     assert "workflow_dispatch" in workflow["on"]
     assert workflow["permissions"] == {"contents": "read", "issues": "write"}
     assert workflow["concurrency"] == {"group": "fls-audit", "cancel-in-progress": "false"}

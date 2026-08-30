@@ -89,10 +89,13 @@ separate diagnostic.
 
 ## Rolling audit issue
 
-The scheduled FLS Audit workflow maintains one issue for each committed
-`spec.lock` baseline. The issue body contains the latest cumulative report.
-When the net drift changes, the bot adds one comment listing every newly
-active, updated, and resolved drift item since its last successful update.
+The FLS Audit workflow runs daily at 04:23 UTC and maintains one issue for each
+committed `spec.lock` baseline. Minute 23 avoids top-of-hour load, when GitHub
+warns that scheduled workflows may be delayed or dropped. GitHub Actions cron
+has minute precision, so the dispatch second cannot be selected. The issue body
+contains the latest cumulative report. When the net drift changes, the bot adds
+one comment listing every newly active, updated, and resolved drift item since
+its last successful update.
 
 If scheduled runs are missed, the next run posts the complete net catch-up as
 one comment. Changes that appeared and were fully reverted between successful
