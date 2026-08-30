@@ -25,11 +25,13 @@ dispatched Release Preflight enforce lock freshness and fail while it is stale.
 Tagged Deploy builds require exact-commit preflight evidence and build offline
 from the committed lock instead of consulting the live FLS.
 
-Local builds enforce freshness by default. Use `--ignore-spec-lock-diff` only
-when intentionally reproducing the nonblocking CI policy:
+Local builds also report freshness drift without failing by default, so a
+contributor can build an unrelated guideline without first synchronizing the
+shared lock. Use `--enforce-spec-lock-diff` when intentionally checking freshness
+before a synchronization or release:
 
 ```shell
-uv run --frozen make.py --ignore-spec-lock-diff
+uv run --frozen make.py --enforce-spec-lock-diff
 ```
 
 ## Release preflight and deploy

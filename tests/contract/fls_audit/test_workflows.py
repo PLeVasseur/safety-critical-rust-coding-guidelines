@@ -51,7 +51,8 @@ def test_build_freshness_policy_and_required_context() -> None:
     assert "inputs.offline" in build_step["env"]["OFFLINE_BUILD"]
     assert build_step["shell"] == "bash"
     assert "--offline" in build_step["run"]
-    assert "--ignore-spec-lock-diff" in build_step["run"]
+    assert "--enforce-spec-lock-diff" in build_step["run"]
+    assert "--ignore-spec-lock-diff" not in build_step["run"]
     assert "PIPESTATUS[0]" in build_step["run"]
 
 

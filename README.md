@@ -44,11 +44,11 @@ This prevents the build system from attempting to fetch remote resources, such a
 
 Use `--offline` if you are running `make.py` frequently during development, to prevent rate-limiting due to repeated requests to the [the FLS](https://rust-lang.github.io/fls/paragraph-ids.json).
 
-### Build breaking due to out-dated spec lock file
+### Checking an out-of-date spec lock file
 
-It's a fairly common occurrence for the build to break due to an out of date spec lock file in `src/spec.lock`.
+It is fairly common for `src/spec.lock` to become outdated while a contributor is developing an unrelated guideline.
 
-The file is checked against the current live version of the specification, which means that your local development may go out of date while you are developing a feature.
+Local and normal CI builds report this drift without failing solely because of it. Missing or malformed lock data and invalid FLS references still fail the build.
 
 CI enforcement differs by workflow; see the [FLS CI enforcement policy](docs/fls-audit.md#ci-enforcement-policy) for the blocking and nonblocking paths.
 
@@ -57,17 +57,17 @@ SHA before pushing a version tag. First publication requires a successful
 preflight from the preceding 24 hours; see the
 [release procedure](docs/fls-audit.md#release-preflight-and-deploy).
 
-#### Continuing work while on a feature branch
+#### Enforcing freshness locally
 
-If you run into this while developing a coding guideline, you may ignore this error by running the build with:
+Nightly and Release Preflight enforce freshness. To run the same check locally:
 
 ```shell
-uv run --frozen make.py --ignore-spec-lock-diff
+uv run --frozen make.py --enforce-spec-lock-diff
 ```
 
 #### Auditing the difference
 
-When the build breaks due to the difference in `spec.lock`, a log is saved in `/tmp/fls_diff_<random>.txt` which you can use to audit the differences.
+When the build detects a difference in `spec.lock`, a log is saved in `/tmp/fls_diff_<random>.txt` which you can use to audit the differences.
 
 To see a quick summary of the difference:
 

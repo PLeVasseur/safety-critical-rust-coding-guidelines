@@ -245,9 +245,16 @@ def main(root):
         action="store_true",
     )
     group = parser.add_mutually_exclusive_group()
-    parser.add_argument(
+    freshness_group = parser.add_mutually_exclusive_group()
+    freshness_group.add_argument(
+        "--enforce-spec-lock-diff",
+        help="fail when the live FLS differs from src/spec.lock",
+        default=False,
+        action="store_true",
+    )
+    freshness_group.add_argument(
         "--ignore-spec-lock-diff",
-        help="ignore spec.lock file differences with live release -- for WIP branches only",
+        help="keep live FLS freshness nonblocking (the default; retained for compatibility)",
         default=False,
         action="store_true",
     )
@@ -298,6 +305,6 @@ def main(root):
         args.serve,
         debug,
         args.offline,
-        not args.ignore_spec_lock_diff,
+        args.enforce_spec_lock_diff,
         args.validate_urls,
     )

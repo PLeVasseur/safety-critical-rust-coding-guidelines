@@ -77,8 +77,8 @@ jobs:
             exit 1
           elif [[ "$OFFLINE_BUILD" == "true" ]]; then
             build_args+=(--offline)
-          elif [[ "$ENFORCE_SPEC_LOCK" != "true" ]]; then
-            build_args+=(--ignore-spec-lock-diff)
+          elif [[ "$ENFORCE_SPEC_LOCK" == "true" ]]; then
+            build_args+=(--enforce-spec-lock-diff)
           fi
 
           set +e

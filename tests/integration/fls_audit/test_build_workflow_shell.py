@@ -72,19 +72,19 @@ def run_prerequisite_script(check_result: str, audit_result: str) -> subprocess.
 
 @pytest.mark.integration
 @pytest.mark.parametrize(
-    ("enforce", "offline", "ignored"),
-    [(False, False, True), (True, False, False), (False, True, False)],
+    ("enforce", "offline"),
+    [(False, False), (True, False), (False, True)],
 )
 def test_build_shell_selects_freshness_policy(
     tmp_path: Path,
     enforce: bool,
     offline: bool,
-    ignored: bool,
 ) -> None:
     result, args = run_build_script(tmp_path, enforce=enforce, offline=offline)
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert ("--ignore-spec-lock-diff" in args) is ignored
+    assert ("--enforce-spec-lock-diff" in args) is enforce
+    assert "--ignore-spec-lock-diff" not in args
     assert ("--offline" in args) is offline
 
 
