@@ -66,7 +66,7 @@ def setup(app):
     app.add_config_value(name="debug", default=False, rebuild="env")
     app.add_config_value(
         name="fls_paragraph_ids_url",
-        default="https://rust-lang.github.io/fls/paragraph-ids.json",
+        default=fls_checks.fls_paragraph_ids_url,
         rebuild="env",
     )
     app.add_config_value(

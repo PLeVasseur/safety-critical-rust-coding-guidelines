@@ -10,10 +10,20 @@ import exts.coding_guidelines as coding_guidelines
 from exts.coding_guidelines import fls_checks, fls_linking
 
 
-def app(tmp_path: Path, *, enforce: bool = False, offline: bool = False) -> SimpleNamespace:
+def app(
+    tmp_path: Path,
+    *,
+    enforce: bool = False,
+    offline: bool = False,
+    fls_url: str = fls_checks.fls_paragraph_ids_url,
+) -> SimpleNamespace:
     return SimpleNamespace(
         confdir=tmp_path,
-        config=SimpleNamespace(enable_spec_lock_consistency=enforce, offline=offline),
+        config=SimpleNamespace(
+            enable_spec_lock_consistency=enforce,
+            offline=offline,
+            fls_paragraph_ids_url=fls_url,
+        ),
     )
 
 
@@ -209,6 +219,22 @@ def test_live_fls_fetch_retries_server_error(monkeypatch: pytest.MonkeyPatch) ->
     assert sleeps == [1]
 
 
+def test_live_fls_fetch_honors_retry_after_on_service_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = fls_data()
+    unavailable = response(503, {})
+    unavailable.headers["Retry-After"] = "2"
+    outcomes = [unavailable, response(200, expected)]
+    sleeps = []
+
+    monkeypatch.setattr(fls_checks.requests, "get", lambda _url, *, timeout: outcomes.pop(0))
+    monkeypatch.setattr(fls_checks.time, "sleep", sleeps.append)
+
+    assert fls_checks.fetch_live_fls_data("https://example.test/fls.json") == expected
+    assert sleeps == [2]
+
+
 def test_live_fls_fetch_retries_rate_limit(monkeypatch: pytest.MonkeyPatch) -> None:
     expected = fls_data()
     outcomes = [response(429, {}), response(200, expected)]
@@ -235,10 +261,20 @@ def test_live_fls_fetch_honors_bounded_retry_after(monkeypatch: pytest.MonkeyPat
     assert sleeps == [2]
 
 
-def test_live_fls_fetch_rejects_retry_after_over_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    ("retry_budget", "retry_after"),
+    [
+        (fls_checks.FLS_FETCH_NONBLOCKING_RETRY_BUDGET_SECONDS, 60),
+        (fls_checks.FLS_FETCH_ENFORCING_RETRY_BUDGET_SECONDS, 120),
+    ],
+    ids=["nonblocking", "enforcing"],
+)
+def test_live_fls_fetch_rejects_retry_after_over_budget(
+    monkeypatch: pytest.MonkeyPatch, retry_budget: int, retry_after: int
+) -> None:
     calls = []
     rate_limited = response(429, {})
-    rate_limited.headers["Retry-After"] = "60"
+    rate_limited.headers["Retry-After"] = str(retry_after)
 
     def get(_url: str, *, timeout: tuple[int, int]) -> requests.Response:
         calls.append(timeout)
@@ -247,8 +283,33 @@ def test_live_fls_fetch_rejects_retry_after_over_budget(monkeypatch: pytest.Monk
     monkeypatch.setattr(fls_checks.requests, "get", get)
     monkeypatch.setattr(fls_checks.time, "sleep", lambda _delay: pytest.fail("retry budget exceeded"))
 
-    assert fls_checks.fetch_live_fls_data("https://example.test/fls.json") is None
+    assert (
+        fls_checks.fetch_live_fls_data(
+            "https://example.test/fls.json", retry_budget_seconds=retry_budget
+        )
+        is None
+    )
     assert calls == [(5, 30)]
+
+
+def test_live_fls_fetch_honors_enforcing_retry_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    expected = fls_data()
+    rate_limited = response(429, {})
+    rate_limited.headers["Retry-After"] = "60"
+    outcomes = [rate_limited, response(200, expected)]
+    sleeps = []
+
+    monkeypatch.setattr(fls_checks.requests, "get", lambda _url, *, timeout: outcomes.pop(0))
+    monkeypatch.setattr(fls_checks.time, "sleep", sleeps.append)
+
+    assert (
+        fls_checks.fetch_live_fls_data(
+            "https://example.test/fls.json",
+            retry_budget_seconds=fls_checks.FLS_FETCH_ENFORCING_RETRY_BUDGET_SECONDS,
+        )
+        == expected
+    )
+    assert sleeps == [60]
 
 
 def test_live_fls_fetch_does_not_retry_client_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -279,6 +340,58 @@ def test_live_fls_fetch_does_not_retry_malformed_json(monkeypatch: pytest.Monkey
 
     assert fls_checks.fetch_live_fls_data("https://example.test/fls.json") is None
     assert calls == [(5, 30)]
+
+
+@pytest.mark.parametrize(
+    ("enforce", "expected_budget"),
+    [
+        (False, fls_checks.FLS_FETCH_NONBLOCKING_RETRY_BUDGET_SECONDS),
+        (True, fls_checks.FLS_FETCH_ENFORCING_RETRY_BUDGET_SECONDS),
+    ],
+)
+def test_gather_uses_mode_specific_retry_budget(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    enforce: bool,
+    expected_budget: int,
+) -> None:
+    captured = []
+
+    def fetch(_url: str, *, retry_budget_seconds: int) -> dict:
+        captured.append(retry_budget_seconds)
+        return fls_data()
+
+    monkeypatch.setattr(fls_checks, "fetch_live_fls_data", fetch)
+
+    ids, raw_data = fls_checks.gather_fls_paragraph_ids(
+        app(tmp_path, enforce=enforce), "https://example.test/configured.json"
+    )
+
+    assert captured == [expected_budget]
+    assert "fls_123456789" in ids
+    assert raw_data == fls_data()
+
+
+def test_check_fls_uses_configured_source_url(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    configured_url = "https://example.test/configured.json"
+    value = app(tmp_path, enforce=True, fls_url=configured_url)
+    env = SimpleNamespace(config=SimpleNamespace(offline=False))
+    calls = []
+
+    monkeypatch.setattr(fls_checks, "check_fls_exists_and_valid_format", lambda _app, _env: None)
+
+    def gather(_app, url: str, *, offline: bool):
+        calls.append((url, offline))
+        return {}, None
+
+    monkeypatch.setattr(fls_checks, "gather_fls_paragraph_ids", gather)
+
+    with pytest.raises(fls_checks.FLSValidationError, match=configured_url):
+        fls_checks.check_fls(value, env)
+
+    assert calls == [(configured_url, False)]
 
 
 def test_nonblocking_build_succeeds_after_transient_timeouts(

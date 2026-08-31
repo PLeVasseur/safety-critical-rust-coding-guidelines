@@ -32,6 +32,12 @@ and prints a prominent notice that freshness was not checked. Normal CI surfaces
 that notice as a warning annotation. Nightly, Release Preflight, and an explicit
 local freshness check fail instead of degrading.
 
+Non-enforcing builds limit retry sleeps to three seconds so contributors reach
+the committed-lock fallback promptly. Enforcing freshness gates allow up to 60
+seconds of retry sleep and honor integer `Retry-After` values from `429` and
+`503` responses when the requested delay fits within the remaining budget. A
+longer requested delay is not shortened into an early retry.
+
 The committed lock remains authoritative during degraded validation. A
 guideline that references an FLS item newer than that lock therefore fails as an
 invalid reference; synchronize `src/spec.lock` in a reviewed change rather than

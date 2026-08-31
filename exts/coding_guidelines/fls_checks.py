@@ -16,7 +16,9 @@ from .common import bar_format, get_tqdm, logger
 fls_paragraph_ids_url = "https://rust-lang.github.io/fls/paragraph-ids.json"
 FLS_FETCH_TIMEOUT = (5, 30)
 FLS_FETCH_RETRY_DELAYS = (1, 2)
-FLS_FETCH_RETRY_BUDGET_SECONDS = sum(FLS_FETCH_RETRY_DELAYS)
+# Contributor builds fall back promptly; enforcing gates wait out ordinary CDN throttling.
+FLS_FETCH_NONBLOCKING_RETRY_BUDGET_SECONDS = 3
+FLS_FETCH_ENFORCING_RETRY_BUDGET_SECONDS = 60
 
 
 class FLSValidationError(SphinxError):
@@ -31,7 +33,9 @@ def record_fls_notice(app, message):
     notices.append(message)
 
 
-def fetch_live_fls_data(json_url):
+def fetch_live_fls_data(
+    json_url, *, retry_budget_seconds=FLS_FETCH_NONBLOCKING_RETRY_BUDGET_SECONDS
+):
     retry_sleep = 0
     for attempt in range(len(FLS_FETCH_RETRY_DELAYS) + 1):
         try:
@@ -53,7 +57,7 @@ def fetch_live_fls_data(json_url):
                 logger.info("Unable to retrieve live FLS data from %s: %s", json_url, error)
                 return None
             delay = FLS_FETCH_RETRY_DELAYS[attempt]
-            if status == 429:
+            if status in (429, 503):
                 retry_after = response.headers.get("Retry-After")
                 if retry_after is not None:
                     try:
@@ -63,7 +67,7 @@ def fetch_live_fls_data(json_url):
                     else:
                         if parsed_delay >= 0:
                             delay = parsed_delay
-            remaining = FLS_FETCH_RETRY_BUDGET_SECONDS - retry_sleep
+            remaining = retry_budget_seconds - retry_sleep
             if delay > remaining:
                 logger.info(
                     "Live FLS retry delay of %s seconds exceeds the "
@@ -85,16 +89,15 @@ def check_fls(app, env):
     check_fls_exists_and_valid_format(app, env)
     offline_mode = env.config.offline
     enforce_freshness = app.config.enable_spec_lock_consistency
+    json_url = app.config.fls_paragraph_ids_url
 
     # Gather all FLS paragraph IDs from the specification and get the raw JSON
-    fls_ids, raw_json_data = gather_fls_paragraph_ids(
-        app, fls_paragraph_ids_url, offline=offline_mode
-    )
+    fls_ids, raw_json_data = gather_fls_paragraph_ids(app, json_url, offline=offline_mode)
     freshness_available = True
     if not raw_json_data:
         if not offline_mode and not enforce_freshness:
             fls_ids, raw_json_data = gather_fls_paragraph_ids(
-                app, fls_paragraph_ids_url, offline=True
+                app, json_url, offline=True
             )
             freshness_available = False
             if raw_json_data:
@@ -114,7 +117,7 @@ def check_fls(app, env):
             else:
                 error_message = (
                     "Failed to retrieve or parse the FLS specification from "
-                    f"{fls_paragraph_ids_url}"
+                    f"{json_url}"
                 )
             logger.error(error_message)
             raise FLSValidationError(error_message)
@@ -297,7 +300,14 @@ def gather_fls_paragraph_ids(app, json_url, *, offline=None):
         # Load the JSON file
         if not offline_mode:
             logger.info("Gathering FLS paragraph IDs from %s", json_url)
-            raw_json_data = fetch_live_fls_data(json_url)
+            retry_budget_seconds = (
+                FLS_FETCH_ENFORCING_RETRY_BUDGET_SECONDS
+                if app.config.enable_spec_lock_consistency
+                else FLS_FETCH_NONBLOCKING_RETRY_BUDGET_SECONDS
+            )
+            raw_json_data = fetch_live_fls_data(
+                json_url, retry_budget_seconds=retry_budget_seconds
+            )
             if raw_json_data is None:
                 return {}, None
             data = raw_json_data
