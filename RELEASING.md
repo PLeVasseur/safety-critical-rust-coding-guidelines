@@ -164,6 +164,11 @@ After that run succeeds, rerun the original Deploy workflow for the unchanged
 tag, either in GitHub Actions or with `gh run rerun <deploy-run-id>`. Do not push
 the tag again.
 
+The release procedure creates lightweight tags. For an annotated tag, confirm
+that the dispatch resolves `GITHUB_SHA` to `RELEASE_SHA`; the workflow's exact
+SHA guard fails closed if it does not. In that case, use the temporary-branch
+fallback below.
+
 If an interface cannot select a tag as the workflow ref, create a temporary
 branch at `RELEASE_SHA`, dispatch preflight against that branch, and delete the
 branch after the run finishes. The branch is a user-interface fallback, not a

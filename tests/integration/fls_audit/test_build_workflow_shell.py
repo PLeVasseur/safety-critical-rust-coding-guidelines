@@ -177,11 +177,14 @@ def test_build_shell_annotates_degraded_freshness_without_failing(tmp_path: Path
     result, _ = run_build_script(
         tmp_path,
         enforce=False,
-        uv_output=" ! FLS NOTICE: Live FLS unavailable; freshness was not checked.",
+        uv_output=" ! FLS NOTICE: Live FLS unavailable or unusable; freshness was not checked.",
     )
 
     assert result.returncode == 0
-    assert "::warning title=FLS validation::Live FLS unavailable; freshness was not checked." in result.stdout
+    assert (
+        "::warning title=FLS validation::Live FLS unavailable or unusable; "
+        "freshness was not checked." in result.stdout
+    )
 
 
 @pytest.mark.integration

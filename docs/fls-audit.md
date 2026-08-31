@@ -25,11 +25,17 @@ dispatched Release Preflight enforce lock freshness and fail while it is stale.
 Tagged Deploy builds require exact-commit preflight evidence and build offline
 from the committed lock instead of consulting the live FLS.
 
-Live FLS requests have bounded timeouts and retries. If the live source remains
-unavailable, a non-enforcing build validates references and coverage against the
-committed lock and prints a prominent notice that freshness was not checked.
-Normal CI surfaces that notice as a warning annotation. Nightly, Release
-Preflight, and an explicit local freshness check fail instead of degrading.
+Live FLS requests have bounded timeouts and retries, including bounded handling
+of rate-limit responses. If the live source remains unavailable or unusable, a
+non-enforcing build validates references and coverage against the committed lock
+and prints a prominent notice that freshness was not checked. Normal CI surfaces
+that notice as a warning annotation. Nightly, Release Preflight, and an explicit
+local freshness check fail instead of degrading.
+
+The committed lock remains authoritative during degraded validation. A
+guideline that references an FLS item newer than that lock therefore fails as an
+invalid reference; synchronize `src/spec.lock` in a reviewed change rather than
+bypassing the reference check.
 
 Local builds also report freshness drift without failing by default, so a
 contributor can build an unrelated guideline without first synchronizing the

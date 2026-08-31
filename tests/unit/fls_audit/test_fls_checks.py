@@ -115,11 +115,12 @@ def test_nonblocking_drift_records_prominent_summary(
     ]
 
 
-def test_detailed_report_write_failure_is_a_warning(
+def test_detailed_report_write_failure_records_notice_without_warning(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    value = app(tmp_path)
     (tmp_path / "spec.lock").write_text(json.dumps({"documents": [{"sections": []}]}), encoding="utf-8")
     monkeypatch.setattr(fls_checks, "SphinxNeedsData", lambda _env: SimpleNamespace(get_needs_view=lambda: {}))
     monkeypatch.setattr(fls_checks, "get_tqdm", lambda *, iterable, **_kwargs: iterable)
@@ -139,8 +140,13 @@ def test_detailed_report_write_failure_is_a_warning(
     monkeypatch.setattr(fls_checks.fls_diff, "build_summary", lambda _affected, _changed: ["change"])
     caplog.set_level(logging.WARNING, logger="sphinx")
 
-    assert fls_checks.check_fls_lock_consistency(app(tmp_path), object(), {"live": {}}) == (True, ["change"])
-    assert "Failed to write detailed differences to temp file: disk full" in caplog.text
+    assert fls_checks.check_fls_lock_consistency(value, object(), {"live": {}}) == (True, ["change"])
+    assert caplog.records == []
+    assert value.fls_notices == [
+        "spec.lock drift detected; build continued (added: 0, removed: 0, changed: 1). "
+        "Detailed report unavailable. "
+        "Run `uv run --frozen make.py --enforce-spec-lock-diff` to make this blocking."
+    ]
 
 
 def test_check_fls_ignores_only_detected_drift(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -201,6 +207,48 @@ def test_live_fls_fetch_retries_server_error(monkeypatch: pytest.MonkeyPatch) ->
 
     assert fls_checks.fetch_live_fls_data("https://example.test/fls.json") == expected
     assert sleeps == [1]
+
+
+def test_live_fls_fetch_retries_rate_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    expected = fls_data()
+    outcomes = [response(429, {}), response(200, expected)]
+    sleeps = []
+
+    monkeypatch.setattr(fls_checks.requests, "get", lambda _url, *, timeout: outcomes.pop(0))
+    monkeypatch.setattr(fls_checks.time, "sleep", sleeps.append)
+
+    assert fls_checks.fetch_live_fls_data("https://example.test/fls.json") == expected
+    assert sleeps == [1]
+
+
+def test_live_fls_fetch_honors_bounded_retry_after(monkeypatch: pytest.MonkeyPatch) -> None:
+    expected = fls_data()
+    rate_limited = response(429, {})
+    rate_limited.headers["Retry-After"] = "2"
+    outcomes = [rate_limited, response(200, expected)]
+    sleeps = []
+
+    monkeypatch.setattr(fls_checks.requests, "get", lambda _url, *, timeout: outcomes.pop(0))
+    monkeypatch.setattr(fls_checks.time, "sleep", sleeps.append)
+
+    assert fls_checks.fetch_live_fls_data("https://example.test/fls.json") == expected
+    assert sleeps == [2]
+
+
+def test_live_fls_fetch_rejects_retry_after_over_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = []
+    rate_limited = response(429, {})
+    rate_limited.headers["Retry-After"] = "60"
+
+    def get(_url: str, *, timeout: tuple[int, int]) -> requests.Response:
+        calls.append(timeout)
+        return rate_limited
+
+    monkeypatch.setattr(fls_checks.requests, "get", get)
+    monkeypatch.setattr(fls_checks.time, "sleep", lambda _delay: pytest.fail("retry budget exceeded"))
+
+    assert fls_checks.fetch_live_fls_data("https://example.test/fls.json") is None
+    assert calls == [(5, 30)]
 
 
 def test_live_fls_fetch_does_not_retry_client_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -272,8 +320,29 @@ def test_nonblocking_build_succeeds_after_transient_timeouts(
     assert not hasattr(value, "fls_notices")
 
 
-def test_nonblocking_fetch_failure_uses_lock_and_records_notice(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+@pytest.mark.parametrize(
+    ("live_result", "expected_calls"),
+    [
+        (requests.ConnectionError("unavailable"), 3),
+        ({"documents": []}, 1),
+        ({"foo": 1}, 1),
+        ({"documents": [{"title": "FLS", "sections": []}]}, 1),
+        ({"documents": [{"title": "FLS", "sections": ["oops"]}]}, 1),
+    ],
+    ids=[
+        "network-error",
+        "empty-documents",
+        "missing-documents",
+        "empty-sections",
+        "malformed-sections",
+    ],
+)
+def test_nonblocking_live_failure_uses_lock_without_sphinx_warnings(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    live_result: Exception | dict,
+    expected_calls: int,
 ) -> None:
     locked = fls_data()
     (tmp_path / "spec.lock").write_text(json.dumps(locked), encoding="utf-8")
@@ -282,11 +351,13 @@ def test_nonblocking_fetch_failure_uses_lock_and_records_notice(
     calls = []
     checked_ids = []
 
-    def fail_fetch(_url: str, *, timeout: tuple[int, int]) -> None:
+    def get(_url: str, *, timeout: tuple[int, int]) -> requests.Response:
         calls.append(timeout)
-        raise requests.ConnectionError("unavailable")
+        if isinstance(live_result, Exception):
+            raise live_result
+        return response(200, live_result)
 
-    monkeypatch.setattr(fls_checks.requests, "get", fail_fetch)
+    monkeypatch.setattr(fls_checks.requests, "get", get)
     monkeypatch.setattr(fls_checks.time, "sleep", lambda _delay: None)
     monkeypatch.setattr(fls_checks, "check_fls_exists_and_valid_format", lambda _app, _env: None)
     monkeypatch.setattr(
@@ -299,14 +370,15 @@ def test_nonblocking_fetch_failure_uses_lock_and_records_notice(
     monkeypatch.setattr(fls_checks, "insert_fls_coverage", lambda _app, _env, _ids: None)
     monkeypatch.setattr(fls_checks, "calculate_fls_coverage", lambda _ids, _ignored: {})
     monkeypatch.setattr(fls_checks, "log_coverage_report", lambda _coverage: None)
+    caplog.set_level(logging.WARNING, logger="sphinx")
 
     fls_checks.check_fls(value, env)
 
-    assert calls == [(5, 30)] * 3
+    assert calls == [(5, 30)] * expected_calls
     assert set(checked_ids[0]) == {"fls_section", "fls_123456789"}
     assert value.fls_urls["fls_123456789"].endswith("paragraph.html")
     assert value.fls_notices == [
-        "Live FLS unavailable; freshness was not checked. "
+        "Live FLS unavailable or unusable; freshness was not checked. "
         "References were validated against the committed src/spec.lock."
     ]
 
@@ -318,6 +390,7 @@ def test_nonblocking_fetch_failure_uses_lock_and_records_notice(
         lambda _app: pytest.fail("HTML linking fetched FLS IDs a second time"),
     )
     fls_linking.post_process_html(value)
+    assert caplog.records == []
 
 
 def test_nonblocking_fetch_failure_requires_valid_lock(

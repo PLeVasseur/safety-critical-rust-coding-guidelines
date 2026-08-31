@@ -16,6 +16,7 @@ from .common import bar_format, get_tqdm, logger
 fls_paragraph_ids_url = "https://rust-lang.github.io/fls/paragraph-ids.json"
 FLS_FETCH_TIMEOUT = (5, 30)
 FLS_FETCH_RETRY_DELAYS = (1, 2)
+FLS_FETCH_RETRY_BUDGET_SECONDS = sum(FLS_FETCH_RETRY_DELAYS)
 
 
 class FLSValidationError(SphinxError):
@@ -31,6 +32,7 @@ def record_fls_notice(app, message):
 
 
 def fetch_live_fls_data(json_url):
+    retry_sleep = 0
     for attempt in range(len(FLS_FETCH_RETRY_DELAYS) + 1):
         try:
             response = requests.get(json_url, timeout=FLS_FETCH_TIMEOUT)
@@ -43,14 +45,36 @@ def fetch_live_fls_data(json_url):
             response = getattr(error, "response", None)
             status = getattr(response, "status_code", None)
             retryable = isinstance(error, (requests.ConnectionError, requests.Timeout)) or (
-                isinstance(error, requests.HTTPError) and status is not None and status >= 500
+                isinstance(error, requests.HTTPError)
+                and status is not None
+                and (status == 429 or status >= 500)
             )
             if not retryable or attempt == len(FLS_FETCH_RETRY_DELAYS):
                 logger.info("Unable to retrieve live FLS data from %s: %s", json_url, error)
                 return None
             delay = FLS_FETCH_RETRY_DELAYS[attempt]
+            if status == 429:
+                retry_after = response.headers.get("Retry-After")
+                if retry_after is not None:
+                    try:
+                        parsed_delay = int(retry_after)
+                    except ValueError:
+                        pass
+                    else:
+                        if parsed_delay >= 0:
+                            delay = parsed_delay
+            remaining = FLS_FETCH_RETRY_BUDGET_SECONDS - retry_sleep
+            if delay > remaining:
+                logger.info(
+                    "Live FLS retry delay of %s seconds exceeds the "
+                    "%s-second remaining budget",
+                    delay,
+                    remaining,
+                )
+                return None
             logger.info("Live FLS request failed; retrying in %s second(s): %s", delay, error)
             time.sleep(delay)
+            retry_sleep += delay
     raise AssertionError("unreachable")
 
 
@@ -76,7 +100,7 @@ def check_fls(app, env):
             if raw_json_data:
                 record_fls_notice(
                     app,
-                    "Live FLS unavailable; freshness was not checked. "
+                    "Live FLS unavailable or unusable; freshness was not checked. "
                     "References were validated against the committed src/spec.lock.",
                 )
         if not raw_json_data:
@@ -291,7 +315,8 @@ def gather_fls_paragraph_ids(app, json_url, *, offline=None):
         # Check if we have the expected document structure
         documents = data.get("documents") if isinstance(data, dict) else None
         if not isinstance(documents, list) or not documents:
-            logger.error("FLS data does not contain a nonempty 'documents' list")
+            log = logger.error if offline_mode else logger.info
+            log("FLS data does not contain a nonempty 'documents' list")
             return {}, None
 
         # Base URL for constructing direct links
@@ -351,6 +376,11 @@ def gather_fls_paragraph_ids(app, json_url, *, offline=None):
                         "parent_section_id": section_id if section_id else None,
                     }
 
+        if not all_fls_ids:
+            log = logger.error if offline_mode else logger.info
+            log("FLS data does not contain any usable section or paragraph IDs")
+            return {}, None
+
         logger.info(f"Found {len(all_fls_ids)} total FLS IDs (sections and paragraphs)")
         # Count sections vs paragraphs
         sections_count = sum(
@@ -364,9 +394,12 @@ def gather_fls_paragraph_ids(app, json_url, *, offline=None):
 
         return all_fls_ids, raw_json_data
 
+    # Upstream schema drift makes live data unusable; check_fls decides whether
+    # that is fatal or whether the build can fall back to the committed lock.
     except (json.JSONDecodeError, OSError, AttributeError, TypeError, ValueError) as error:
         source = lock_path if offline_mode else json_url
-        logger.error("Failed to parse FLS data from %s: %s", source, error)
+        log = logger.error if offline_mode else logger.info
+        log("Failed to parse FLS data from %s: %s", source, error)
         return {}, None
 
 
@@ -448,16 +481,24 @@ def check_fls_lock_consistency(app, env, fls_raw_data):
         )
 
         temp_path = None
+        report_unavailable = False
         if has_differences:
             try:
                 temp_path = fls_diff.write_detailed_report(detailed_differences)
                 log = logger.warning if app.config.enable_spec_lock_consistency else logger.info
                 log(f"Detailed FLS differences written to: {temp_path}")
             except Exception as error:
-                logger.warning(f"Failed to write detailed differences to temp file: {error}")
+                log = logger.warning if app.config.enable_spec_lock_consistency else logger.info
+                log(f"Failed to write detailed differences to temp file: {error}")
+                report_unavailable = True
 
             if not app.config.enable_spec_lock_consistency:
-                details = f" Details: {temp_path}." if temp_path else ""
+                if temp_path:
+                    details = f" Details: {temp_path}."
+                elif report_unavailable:
+                    details = " Detailed report unavailable."
+                else:
+                    details = ""
                 record_fls_notice(
                     app,
                     "spec.lock drift detected; build continued "

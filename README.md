@@ -54,10 +54,13 @@ It is fairly common for `src/spec.lock` to become outdated while a contributor i
 
 Local and normal CI builds print a prominent end-of-build drift summary without
 failing solely because of it; CI also creates a warning annotation and preserves
-the detailed report as an artifact. If the live FLS remains unavailable after
-bounded retries, these non-enforcing builds validate references against the
-committed lock and report that freshness was not checked. Missing or malformed
-lock data and invalid FLS references still fail the build.
+the detailed report as an artifact. If the live FLS remains unavailable or
+unusable after bounded retries, these non-enforcing builds validate references
+against the committed lock and report that freshness was not checked. A
+guideline that references an FLS item newer than the committed lock still fails
+validation; synchronize the lock in a reviewed change rather than bypassing the
+reference check. Missing or malformed lock data and invalid FLS references
+still fail the build.
 
 CI enforcement differs by workflow; see the [FLS CI enforcement policy](docs/fls-audit.md#ci-enforcement-policy) for the blocking and nonblocking paths.
 
