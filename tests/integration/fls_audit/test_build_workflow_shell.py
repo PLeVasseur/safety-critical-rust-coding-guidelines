@@ -156,7 +156,12 @@ def test_build_shell_copies_fls_difference_without_masking_status(tmp_path: Path
     source = Path("/tmp") / f"fls_diff_{tmp_path.parent.name}-{tmp_path.name}.txt"
     source.write_text("spec lock difference\n", encoding="utf-8")
     try:
-        result, _ = run_build_script(tmp_path, enforce=False, uv_exit=uv_exit, uv_output=str(source))
+        result, _ = run_build_script(
+            tmp_path,
+            enforce=False,
+            uv_exit=uv_exit,
+            uv_output=f" ! FLS NOTICE: spec.lock drift detected; build continued\n{source}",
+        )
     finally:
         source.unlink(missing_ok=True)
 
@@ -164,6 +169,19 @@ def test_build_shell_copies_fls_difference_without_masking_status(tmp_path: Path
     assert (tmp_path / "build" / "spec_lock_file_differences.txt").read_text(encoding="utf-8") == (
         "spec lock difference\n"
     )
+    assert "::warning title=FLS validation::spec.lock drift detected; build continued" in result.stdout
+
+
+@pytest.mark.integration
+def test_build_shell_annotates_degraded_freshness_without_failing(tmp_path: Path) -> None:
+    result, _ = run_build_script(
+        tmp_path,
+        enforce=False,
+        uv_output=" ! FLS NOTICE: Live FLS unavailable; freshness was not checked.",
+    )
+
+    assert result.returncode == 0
+    assert "::warning title=FLS validation::Live FLS unavailable; freshness was not checked." in result.stdout
 
 
 @pytest.mark.integration

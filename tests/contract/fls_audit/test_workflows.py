@@ -54,6 +54,7 @@ def test_build_freshness_policy_and_required_context() -> None:
     assert "--enforce-spec-lock-diff" in build_step["run"]
     assert "--ignore-spec-lock-diff" not in build_step["run"]
     assert "PIPESTATUS[0]" in build_step["run"]
+    assert "::warning title=FLS validation::" in build_step["run"]
 
 
 @pytest.mark.contract

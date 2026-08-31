@@ -122,6 +122,10 @@ jobs:
             fi
           fi
 
+          while IFS= read -r notice; do
+            echo "::warning title=FLS validation::${notice#*FLS NOTICE: }"
+          done < <(grep 'FLS NOTICE:' build/build.log || true)
+
           exit "$build_status"
       - name: Archive build artifacts
         uses: actions/upload-artifact@v4

@@ -48,6 +48,8 @@ def on_build_finished(app, exception):
     else:
         if not app.config.debug:
             print(f" + Build complete -> {outdir}")
+        for notice in getattr(app, "fls_notices", []):
+            print(f" ! FLS NOTICE: {notice}")
 
 
 def setup(app):
