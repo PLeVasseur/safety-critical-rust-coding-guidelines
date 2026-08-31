@@ -5,9 +5,9 @@ the Safety-Critical Rust Coding Guidelines to GitHub Pages.
 
 The release candidate is an exact commit from the default branch's history. A
 later merge to `main` does not change that commit or invalidate a successful
-preflight. Release Preflight verifies the candidate against the live Ferrocene
-Language Specification (FLS); Deploy then builds the tagged commit against its
-committed `src/spec.lock` without retrieving the live FLS.
+preflight. Release Preflight verifies the candidate against the live FLS;
+Deploy then builds the tagged commit against its committed `src/spec.lock`
+without retrieving the live FLS.
 
 For the policy rationale and trust boundaries, see the
 [FLS audit and release policy](docs/fls-audit.md#release-preflight-and-deploy).

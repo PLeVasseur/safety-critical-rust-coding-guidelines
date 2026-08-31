@@ -279,7 +279,7 @@ def check_fls_ids_correct(app, env, fls_ids):
 
 def gather_fls_paragraph_ids(app, json_url, *, offline=None):
     """
-    Gather all Ferrocene Language Specification paragraph IDs from the paragraph-ids.json file
+    Gather all FLS paragraph IDs from the paragraph-ids.json file
     or from the lock file in offline mode, including both container section IDs and individual paragraph IDs.
 
     Args:

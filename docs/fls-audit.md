@@ -1,7 +1,7 @@
 # FLS Audit Guide
 
 This guide explains how to audit differences between `src/spec.lock` and the
-current Ferrocene Language Specification (FLS).
+current FLS.
 
 ## Quick start
 
