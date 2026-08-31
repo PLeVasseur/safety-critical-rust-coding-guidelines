@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -290,6 +291,15 @@ def main(root):
         action="store_true",
     )
     args = parser.parse_args()
+
+    if args.offline and args.enforce_spec_lock_diff:
+        parser.error("freshness cannot be enforced offline")
+    if args.ignore_spec_lock_diff:
+        print(
+            "warning: --ignore-spec-lock-diff is deprecated and has no effect; "
+            "freshness is nonblocking by default",
+            file=sys.stderr,
+        )
 
     debug = args.debug or args.verbose
     builder = "linkcheck" if args.check_links else "xml" if args.xml else "html"

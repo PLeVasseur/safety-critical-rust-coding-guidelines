@@ -138,7 +138,7 @@ Use the first applicable recovery:
 | Selected branch and `release_sha` differ | Decide which commit is intended, then dispatch again with a branch whose head is that exact SHA. |
 | Candidate is not reachable from `main` | Merge it through the normal review path or do not release it. |
 | Preflight fails live FLS freshness | Reconcile `src/spec.lock` in a reviewed change, then preflight the new commit. |
-| Preflight is older than 24 hours | Run Release Preflight again from a branch at the exact tagged commit, then rerun Deploy. |
+| Preflight is older than 24 hours | Refresh preflight on the existing tag as described below, then rerun Deploy. |
 | Deploy fails because of a transient service error | Rerun the same Deploy workflow for the unchanged tag and commit. |
 | The committed source or lock must change | Create a reviewed fix commit, run a new preflight, and use a new version tag. |
 
@@ -146,6 +146,28 @@ Do not move an existing version tag to recover a failure. If a deployment has
 already succeeded, its tag-specific `deploy/<tag>` status authorizes future
 redeployment of that same tag and commit without another live FLS check. That
 authorization does not expire.
+
+### Refresh an expired preflight
+
+If the version tag already exists but its successful preflight has expired,
+dispatch Release Preflight directly against the tag with the GitHub CLI:
+
+```shell
+git fetch origin "refs/tags/$VERSION:refs/tags/$VERSION"
+RELEASE_SHA="$(git rev-parse "$VERSION^{}")"
+gh workflow run release-preflight.yml \
+  --ref "$VERSION" \
+  -f release_sha="$RELEASE_SHA"
+```
+
+After that run succeeds, rerun the original Deploy workflow for the unchanged
+tag, either in GitHub Actions or with `gh run rerun <deploy-run-id>`. Do not push
+the tag again.
+
+If an interface cannot select a tag as the workflow ref, create a temporary
+branch at `RELEASE_SHA`, dispatch preflight against that branch, and delete the
+branch after the run finishes. The branch is a user-interface fallback, not a
+requirement of the release protocol.
 
 Commit statuses are workflow evidence, not signed attestations. Repository
 administrators and trusted workflows with status-write permission are inside

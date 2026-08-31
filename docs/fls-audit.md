@@ -25,14 +25,27 @@ dispatched Release Preflight enforce lock freshness and fail while it is stale.
 Tagged Deploy builds require exact-commit preflight evidence and build offline
 from the committed lock instead of consulting the live FLS.
 
+Live FLS requests have bounded timeouts and retries. If the live source remains
+unavailable, a non-enforcing build validates references and coverage against the
+committed lock and prints a prominent notice that freshness was not checked.
+Normal CI surfaces that notice as a warning annotation. Nightly, Release
+Preflight, and an explicit local freshness check fail instead of degrading.
+
 Local builds also report freshness drift without failing by default, so a
 contributor can build an unrelated guideline without first synchronizing the
-shared lock. Use `--enforce-spec-lock-diff` when intentionally checking freshness
-before a synchronization or release:
+shared lock. The final build output summarizes added, removed, and changed FLS
+paragraphs, provides the detailed report path, and names the enforcement command.
+Use `--enforce-spec-lock-diff` when intentionally checking freshness before a
+synchronization or release:
 
 ```shell
 uv run --frozen make.py --enforce-spec-lock-diff
 ```
+
+The enforcing and `--offline` modes are mutually exclusive because an offline
+build cannot establish freshness. The deprecated `--ignore-spec-lock-diff`
+option is retained as a no-op for command-line compatibility; non-enforcing
+freshness is already the default.
 
 ## Release preflight and deploy
 
@@ -65,6 +78,13 @@ inside the release trust boundary. Offline Deploy also remains dependent on
 GitHub Actions, locked package availability, and GitHub Pages; it is decoupled
 specifically from mutable live FLS state and is not claimed to be a
 byte-for-byte reproducible build.
+
+If a first-publication preflight expires after the version tag is created,
+maintainers can dispatch Release Preflight against that existing tag with
+`gh workflow run --ref <tag>` and then rerun the original Deploy workflow. A
+temporary branch at the tagged commit is needed only for an interface that
+cannot select the tag. The canonical commands are in
+[RELEASING.md](../RELEASING.md#refresh-an-expired-preflight).
 
 A successful preflight deliberately remains valid for first publication when
 the live FLS moves during the subsequent 24-hour window. Nightly and the
